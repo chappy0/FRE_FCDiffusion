@@ -27,7 +27,7 @@ conda install pytorch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 pytorch-cuda=
 </code></pre>
 Last, install the required packages in the requirements.txt: <br>
 <pre><code>
-pip install -r requirements.txt
+pip install -r requirements
 </code></pre>
 
 # Dataset
@@ -64,26 +64,33 @@ Besides, our method uses the pretrained OpenCLIP text encoder, download the **op
 		</div>
 </div>
 
-# Model training
+
+
+
+# Teacher Model training
 Before training, set the **control_mode** parameter in the model_config.yaml configuration file. The parameter must be one of "**mini_pass**", "**low_pass**", "**mid_pass**", and "**high_pass**". <be>
 - The "mini_pass" mode realizes style-guided content creation with mini-frequency control. 
 - The "low_pass" mode realizes image semantic manipulation with low-frequency control.
 - The "mid_pass" mode realizes image scene translation with mid-frequency control.
 - The "high-pass" mode realizes image style translation with high-frequency control.
 
-Then, run the Python script **fcdiffusion_train.py** to start training:
+Then, run the Python script **fcdiffusion_train.py** to start training or to run the pre-train model directly:
 <pre><code>
 python fcdiffusion_train.py
 </code></pre>
 
+# Parameter setup
+1 set the batch_size to fit for your machine.
+2 set the path of teacher model ckpt.
+
 # Model inference
 Inference model for text-driven image-to-image translation by running the Python script **fcdiffusion_test.py**:
 <pre><code>
-python fcdiffusion_test.py
+python fcdiffusion_distill_samearch.py
 </code></pre>
 
 # Results display
-<div style="padding-left: 4%; padding-right: 4%;">
+<!-- <div style="padding-left: 4%; padding-right: 4%;">
                 <div align="center">
                     <img src="img/style_guided_content_creation.jpg" width="80%"> <br>
                 </div>
@@ -116,6 +123,6 @@ python fcdiffusion_test.py
                 </div>
             <p style="line-height:180%">Figure 5. Results of image scene translation realized with mid-frequency control. The image scene is translated according to the text prompt. In this scenario, the layout of the source image is preserved while the lower-frequency image style and higher-frequency image contours are not restricted.
 	    </p>
-	    </div>      
+	    </div>       -->
 
 
