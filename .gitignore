@@ -1,0 +1,12 @@
+CLIP-ViT-H-14/*
+lightning_logs*/
+fcdiffusion_*_pass_img_logs
+models/*.ckpt
+datasets/*
+*.sh
+distillation_logs/*
+.bak
+*.txt
+*.csv
+*.ckpt
+
