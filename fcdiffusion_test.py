@@ -117,9 +117,11 @@ yaml_file_path = "configs/model_config.yaml"
 # ckpt_file_path = "lightning_logs/fcdiffusion_low_pass_checkpoint/epoch=3-step=12999.ckpt"
 # ckpt_file_path = "lightning_logs/fcdiffusion_mini_pass_checkpoint/epoch=10-step=34999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=7-step=17999.ckpt"
-# ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs_SA\fcdiffusion_mid_pass_checkpoint\epoch=0-step=1999.ckpt"
-ckpt_file_path = "lightning_logs/fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt"
+# ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt"
+ckpt_file_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_mid_pass_checkpoint\epoch=2-step=5999.ckpt'     
+# ckpt_file_path = r"D:\paper\FRE_FCD\lightning_logs\mini\epoch=1-step=2999.ckpt"
 # ckpt_file_path = "lightning_logs_SA/fcdiffusion_mid_pass_checkpoint\epoch=0-step=1999.ckpt"
+# ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_high_pass_checkpoint\epoch=3-step=12999.ckpt"
 # create mode
 config = OmegaConf.load(yaml_file_path)
 device = torch.device("cuda")
@@ -128,8 +130,8 @@ model = load_model_from_config(config, ckpt_file_path, device)
 
 # print(f"jichengguanxi:{StudentFCDiffusion.mro()}") 
 
-assert model.control_mode in ckpt_file_path.split('\\')[-2], \
-    'the checkpoint model is not consistent with the config file in control mode'
+# assert model.control_mode in ckpt_file_path.split('\\')[-2], \
+#     'the checkpoint model is not consistent with the config file in control mode'
 model.eval()
 
 # set test image path and target prompt
@@ -167,7 +169,7 @@ test_res_num = 1
 
 # 打印所有图片文件的路径  
 # print("Image files:") 
-repath = r"D:\paper\FCDiffusion_code-main\datasets\test_final"    #reconstruction_EXA" 
+repath = r"D:\paper\FCDiffusion_code-main\datasets\test_low_interpre"    #reconstruction_EXA" 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  

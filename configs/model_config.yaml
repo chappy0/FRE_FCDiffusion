@@ -16,7 +16,7 @@ model:
     scale_factor: 0.18215
     use_ema: False
     only_mid_control: False
-    control_mode: "mid_pass"  # must be in ['mini_pass', 'low_pass', 'mid_pass', 'high_pass']
+    control_mode: "high_pass"  # must be in ['mini_pass', 'low_pass', 'mid_pass', 'high_pass']
 
     control_stage_config:
       target: fcdiffusion.fcdiffusion.FreqControlNet
@@ -34,7 +34,7 @@ model:
         transformer_depth: 1
         context_dim: 1024
         legacy: False
-        use_external_attention: False
+        use_external_attention: True
 
     unet_config:
       target: fcdiffusion.fcdiffusion.ControlledUnetModel
@@ -53,7 +53,7 @@ model:
         transformer_depth: 1
         context_dim: 1024
         legacy: False
-        use_external_attention: False
+        use_external_attention: True
 
 
 
