@@ -1,6 +1,6 @@
-# Fast and Resource-Efficient Frequency-Controlled Diffusion Models for Text-Guided Image-to-Image Translation
-This is the code of the paper "Fast and Resource-Efficient Frequency-Controlled Diffusion
-Models for Text-Guided Image-to-Image Translation" 
+#Unified Frequency-Aware Knowledge Distillation for Fast Text-Guided Image-to-Image Translation
+This is the code of the paper "Unified Frequency-Aware Knowledge Distillation for Fast
+Text-Guided Image-to-Image Translation" 
 
 # Citation #
 
