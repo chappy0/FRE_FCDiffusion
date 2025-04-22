@@ -7,23 +7,23 @@ from PIL import Image
 import numpy as np
 from torch.utils.data import DataLoader
 from fcdiffusion.dataset import TestDataset
-# from fcdiffusion_distill_samearch import FCDiffusionDistill
 torch.cuda.set_device(0)
 
 import os
 os.environ['CURL_CA_BUNDLE'] = ''
 
+class StudentModelCheckpoint:
+    pass
+
 def load_student_model_from_config(config, ckpt_file_path, device=torch.device("cuda"), verbose=True):
     print(f"Loading model from {ckpt_file_path}")
     pl_sd = torch.load(ckpt_file_path, map_location="cpu")
-    # if "global_step" in pl_sd:
-    #     print(f"Global Step: {pl_sd['global_step']}")
+
     sd = pl_sd["state_dict"]
 
-    # student_sd = {k.replace("model.", ""): v for k, v in sd.items() if  k.startswith("model.") }
-    student_sd = {k[6:]: v for k, v in ckpt['state_dict'].items()  if  k.startswith("model.") }
-    # with open("student_sd.txt", 'a') as f:
-    #     f.write(f"student_sd:{student_sd}\n")
+
+    student_sd = {k[6:]: v for k, v in sd.items()  if  k.startswith("model.") }
+
 
     model = instantiate_from_config(config.model)
 
@@ -54,22 +54,10 @@ def load_student_model_from_config(config, ckpt_file_path, device=torch.device("
 
 # Load configuration and checkpoint
 yaml_file_path = 'configs/student_model_config.yaml'
-# ckpt_file_path =  "lightning_logs/fcdiffusion_low_pass_checkpoint/epoch=2-step=55999-v1.ckpt"
-ckpt_file_path = 'lightning_logs/distiallation_low_pass_checkpoint/epoch=3-step=141999.ckpt'
-# yaml_file_path = "configs/teacher_model_config.yaml"
-# ckpt_file_path = '/home/apulis-dev/userdata/FCDiffusion_code/lightning_logs/fcdiffusion_mid_pass_checkpoint/epoch=11-step=241999.ckpt'
-ckpt = torch.load(ckpt_file_path, map_location="cpu")  # 加载 checkpoint
+ckpt_file_path = 'path/to/yourname'
 
 
-# 提取学生模型的权重
-# student_sd = {k: v for k, v in ckpt['state_dict'].items()  }
-# student_sd = {k[6:]: v for k, v in ckpt['state_dict'].items()  if  k.startswith("model.") }
-# # 将输出保存到文件
-# output_file_path = '0224_invert_student_model_parameters_from_ckpt1.txt'  # 输出文件路径
-# with open(output_file_path, 'w') as f:
-#     f.write("222Student model parameters in checkpoint:\n")
-#     for key in student_sd.keys():
-#         f.write(f"{key}\n")
+
 
 config = OmegaConf.load(yaml_file_path)
 device = torch.device("cuda")
@@ -78,14 +66,8 @@ model = load_student_model_from_config(config, ckpt_file_path, device)
 # Ensure model is in eval mode
 model.eval()
 
-# # Debugging: Print model structure
-# output_file_path = 'student_model_arch_dis33.txt'  # 输出文件路径
-# with open(output_file_path, 'w') as f:
-#     # for key in student_sd.keys():
-#     f.write(f"Model architecture_dis2: {model}")
 
-# Set test image path and target prompt
-import os
+
 
 def is_image_file(filename):
     """Check if the file is an image file."""
@@ -112,11 +94,11 @@ def traverse_images_and_texts(directory):
     return image_files, text_contents
 
 # Set test image path and target prompt
-directory_path = r'D:\paper\FCDiffusion_code-main\datasets\test'  # Replace with your directory path
+directory_path = 'path/to/yourname' # Replace with your directory path
 image_files, text_contents = traverse_images_and_texts(directory_path)
 
 # Output directory
-repath = r"D:\paper\FCDiffusion_code-main\datasets\test_dis"
+repath = 'path/to/yourname'
 if not os.path.exists(repath):
     os.makedirs(repath)
 
@@ -142,21 +124,3 @@ for image_file, text_content in zip(image_files, text_contents):
         # Image.fromarray(((sample.cpu().numpy() + 1) * 127.5).astype(np.uint8)).show()
         Image.fromarray(((sample.cpu().numpy() + 1) * 127.5).astype(np.uint8)).save(reconstruction_img_path)
         
-        # Debugging: Check output values
-        # print(f"Log output: {log}")
-        # reconstruction = log['reconstruction'].squeeze()
-        # # print(f"Reconstruction min/max: {reconstruction.min()}, {reconstruction.max()}")
-        # reconstruction = reconstruction.permute(1, 2, 0)
-        # # Normalize and save the image
-        # reconstruction = torch.clamp(reconstruction, -1, 1)
-        # reconstruction_img = Image.fromarray(((reconstruction.cpu().numpy() + 1) * 127.5).astype(np.uint8))
-        # # reconstruction_img.show()  # Display the image for debugging
-        # reconstruction_img.save(reconstruction_img_path)
-
-        # # Debugging: Check sample
-        # sample = log["samples"].squeeze()
-        # sample = sample.permute(1, 2, 0)
-        # # print(f"Sample shape min/max:{sample.shape} {sample.min()}, {sample.max()}")
-        # sample = torch.clamp(sample, -1, 1)
-        # Image.fromarray(((sample.cpu().numpy() + 1) * 127.5).astype(np.uint8)).save(reconstruction_img_path)
-

@@ -190,7 +190,7 @@ for band in data:
     
     # 创建热力图
     plt.figure(figsize=(10, 8))
-    ax = sns.heatmap(matrix, annot=True, annot_kws={"size": 12}, cmap=cmap, xticklabels=[band], yticklabels=operations,
+    ax = sns.heatmap(matrix, annot=True, annot_kws={"size": 26}, cmap=cmap, xticklabels=[band], yticklabels=operations,
                      cbar=True, cbar_kws={'label': 'Energy Difference Ratio (ΔE)'})
     
     # 设置标题
@@ -200,8 +200,8 @@ for band in data:
     
     # 调整颜色条的位置和大小
     cbar = ax.collections[0].colorbar
-    cbar.ax.tick_params(labelsize=20)
-    cbar.set_label('Energy Difference Ratio (ΔE)', fontsize=12)
+    cbar.ax.tick_params(labelsize=22)
+    cbar.set_label('Energy Difference Ratio (ΔE)', fontsize=22)
     
     # 调整 x 轴和 y 轴的刻度标签字体大小
     plt.xticks(fontsize=22)

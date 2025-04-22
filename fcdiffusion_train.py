@@ -10,7 +10,7 @@ torch.cuda.set_device(0)
 
 # Configs
 # resume_path = r'D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt'
-resume_path = r"D:\paper\FRE_FCD\lightning_logs\low\epoch=5-step=125999.ckpt"
+resume_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_high_pass_checkpoint\epoch=7-step=9999.ckpt'
 batch_size = 2
 logger_freq = 1000
 learning_rate = 1e-5 #origin is 6e-6,1e-5

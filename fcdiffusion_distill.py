@@ -21,7 +21,7 @@ class FCDiffusionDistill(pl.LightningModule):
         self.log_every_n_steps = log_every_n_steps
         # 如果没有提供lambda_dict，则默认均分权重（总和为1）
         if lambda_dict is None:
-            self.lambda_dict = {"low_pass": 0.25, "mini_pass": 0.25, "mid_pass": 0.25, "high_pass": 0.25}
+            self.lambda_dict = {"low_pass": 0.15, "mini_pass": 0.45, "mid_pass": 0.25, "high_pass": 0.15}
         else:
             self.lambda_dict = lambda_dict
 
@@ -61,39 +61,92 @@ class FCDiffusionDistill(pl.LightningModule):
         norm = torch.sqrt(torch.sum(noise ** 2, dim=[1, 2, 3], keepdim=True) + 1e-8)
         return noise / norm
 
-    def training_step(self, batch, batch_idx):
-        # 分别使用教师和学生模型获取输入
-        # 注意：教师模型内部的 get_input 根据各自的 control_mode 返回对应的控制信号
-        x_teacher, c_teacher = None, None
-        x_student, c_student = None, None
+    # def training_step(self, batch, batch_idx):
+    #     # 分别使用教师和学生模型获取输入
+    #     # 注意：教师模型内部的 get_input 根据各自的 control_mode 返回对应的控制信号
+    #     x_teacher, c_teacher = None, None
+    #     x_student, c_student = None, None
 
-        # 假设教师和学生 get_input 接口一致，这里用任一教师模型获取输入（数据一致）
-        teacher_model_sample = next(iter(self.teacher_models.values()))
-        x_teacher, c_teacher = teacher_model_sample.get_input(batch, teacher_model_sample.first_stage_key)
-        x_student, c_student = self.model.get_input(batch, self.model.first_stage_key)
+    #     # 假设教师和学生 get_input 接口一致，这里用任一教师模型获取输入（数据一致）
+    #     teacher_model_sample = next(iter(self.teacher_models.values()))
+    #     print(f"control_model:{teacher_model_sample}")
+    #     x_teacher, c_teacher = teacher_model_sample.get_input(batch, teacher_model_sample.first_stage_key)
+    #     x_student, c_student = self.model.get_input(batch, self.model.first_stage_key)
+        
+
+    #     total_loss = 0.0
+    #     loss_dict = {}
+    #     # 对于每个教师模型（各个频段），计算对应的蒸馏损失
+    #     for mode, teacher_model in self.teacher_models.items():
+    #         with torch.no_grad():
+
+    #             # 这里教师模型内部根据配置中的 control_mode 进行处理，不需要额外传参
+    #             teacher_eps = teacher_model(x_teacher, c_teacher, return_eps=True)
+    #         # student_eps = self.model(x_student, c_student, return_eps=True, control= None) 
+    #         print(f"mode:{mode}")
+    #         self.model.control_mode = mode 
+    #         student_eps = self.model(x_student, c_student, return_eps=True)   # 学生模型也需支持对齐接口
+    #         student_noise_loss, _ = self.model.shared_step(batch)
+    #         loss_mode = self.noise_loss_normalized(student_eps, teacher_eps)
+    #         weighted_loss = self.lambda_dict[mode] * loss_mode
+    #         total_loss += weighted_loss
+    #         total_loss += student_noise_loss
+    #         loss_dict[mode] = loss_mode.item()
     
+    #     # 记录日志
+    #     self.log("training/total_loss", total_loss, on_step=True, on_epoch=False, prog_bar=True)
+    #     for mode in self.teacher_models.keys():
+    #         self.log(f"training/{mode}_loss", loss_dict[mode], on_step=True,on_epoch=False, prog_bar=True)
+    
+    #     if batch_idx % self.log_every_n_steps == 0:
+    #         print(f"Step {self.trainer.global_step}: " + ", ".join([f"{mode}_loss={loss_dict[mode]:.4f}" for mode in self.teacher_models.keys()]))
+    
+    #     return total_loss
+
+    def training_step(self, batch, batch_idx):
+        # 初始化总损失和损失字典
         total_loss = 0.0
         loss_dict = {}
-        # 对于每个教师模型（各个频段），计算对应的蒸馏损失
+
+        # 遍历每个教师模型
         for mode, teacher_model in self.teacher_models.items():
+            # 获取教师模型的输入
+            x_teacher, c_teacher = teacher_model.get_input(batch, teacher_model.control_mode)
+            
+            # 学生模型的输入
+            x_student, c_student = self.model.get_input(batch, self.model.first_stage_key)
+            
             with torch.no_grad():
-                # 这里教师模型内部根据配置中的 control_mode 进行处理，不需要额外传参
+                # 计算教师模型的输出
                 teacher_eps = teacher_model(x_teacher, c_teacher, return_eps=True)
-            student_eps = self.model(x_student, c_student, return_eps=True, control= None)  # 学生模型也需支持对齐接口
+
+            # 设置学生模型的控制模式
+            self.model.control_mode = mode
+            
+            # 计算学生模型的输出和自身噪声预测损失
+            student_eps = self.model(x_student, c_student, return_eps=True)
+            student_noise_loss, _ = self.model.shared_step(batch)
+
+            # 计算蒸馏损失
             loss_mode = self.noise_loss_normalized(student_eps, teacher_eps)
-            weighted_loss = self.lambda_dict[mode] * loss_mode
-            total_loss += weighted_loss
-            loss_dict[mode] = loss_mode.item()
-    
+            weighted_loss = self.lambda_dict.get(mode, 1.0) * loss_mode
+
+            # 累加损失
+            total_loss += weighted_loss + student_noise_loss
+            loss_dict[f"{mode}_distill_loss"] = loss_mode.item()
+            loss_dict[f"{mode}_student_loss"] = student_noise_loss.item()
+
         # 记录日志
-        self.log("training/total_loss", total_loss, on_step=True, prog_bar=True)
-        for mode in self.teacher_models.keys():
-            self.log(f"training/{mode}_loss", loss_dict[mode], on_step=True)
-    
+        self.log("training/total_loss", total_loss, on_step=True, on_epoch=False, prog_bar=True)
+        for key, value in loss_dict.items():
+            self.log(f"training/{key}", value, on_step=True, on_epoch=False, prog_bar=True)
+
         if batch_idx % self.log_every_n_steps == 0:
-            print(f"Step {self.trainer.global_step}: " + ", ".join([f"{mode}_loss={loss_dict[mode]:.4f}" for mode in self.teacher_models.keys()]))
-    
+            print(f"Step {self.trainer.global_step}: " +
+                ", ".join([f"{key}={value:.4f}" for key, value in loss_dict.items()]))
+
         return total_loss
+
 
     @staticmethod
     def load_model_from_config(config, ckpt, device=torch.device("cuda"), verbose=True):
@@ -144,10 +197,10 @@ class FCDiffusionDistill(pl.LightningModule):
 if __name__ == "__main__":
     # 教师模型 checkpoint 字典，每个频段对应一个 checkpoint 路径
     teacher_ckpt = {
-        "low_pass": r"D:\paper\FRE_FCD\lightning_logs\low\epoch=5-step=17999.ckpt",
-        "mini_pass": r"D:\paper\FRE_FCD\lightning_logs\mini\epoch=1-step=2999.ckpt",
-        "mid_pass": r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt",
-        "high_pass": r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_high_pass_checkpoint\epoch=3-step=12999.ckpt"
+        "low_pass": "./lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=5-step=17999.ckpt",
+        "mini_pass": "./lightning_logs_SA/fcdiffusion_mini_pass_checkpoint/epoch=1-step=2999.ckpt",
+        "mid_pass": "./lightning_logs_SA/fcdiffusion_mid_pass_checkpoint/epoch=8-step=24999.ckpt",
+        "high_pass": "lightning_logs_SA/fcdiffusion_high_pass_checkpoint/epoch=2-step=9999.ckpt"
     }
     
     student_config = 'configs/student_model_config.yaml'
@@ -164,8 +217,8 @@ if __name__ == "__main__":
     
     from fcdiffusion.dataset import TrainDataset
     from torch.utils.data import DataLoader
-    dataset = TrainDataset('/home/apulis-dev/userdata/FCDiffusion_code/datasets/training_data.json', cache_size=1000)
-    dataloader = DataLoader(dataset, num_workers=2, batch_size=1, shuffle=True)
+    dataset = TrainDataset('/home/apulis-dev/userdata/FCDiffusion_code/datasets/training_data.json', cache_size=100)
+    dataloader = DataLoader(dataset, num_workers=1, batch_size=1, shuffle=True)
     
     from pytorch_lightning.callbacks import ModelCheckpoint
 
@@ -204,3 +257,5 @@ if __name__ == "__main__":
     )
     
     trainer.fit(model, dataloader)
+
+

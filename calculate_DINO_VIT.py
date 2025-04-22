@@ -102,8 +102,6 @@ def compute_structure_similarity(image1, image2, dino_extractor):
 
 
 
-
-
 def compute_folder_similarity(folder1, folder2, dino_extractor):
     # 获取文件夹1中的所有图片文件并排序
     images1 = sorted([os.path.join(folder1, f) for f in os.listdir(folder1) if f.endswith(('.jpg', '.png', '.jpeg'))])
@@ -154,9 +152,9 @@ def save_results_to_file(results, average_similarity, output_file):
 
 if __name__ == "__main__":
     # Define folders
-    folder1 = r"D:\paper\FCDiffusion_code-main\datasets\test"
-    folder2 = r"D:\paper\FCDiffusion_code-main\datasets\test_final"
-    output_file = "similarity_results_dis_mid.csv"
+    folder1 = r"D:\paper\FCDiffusion_code-main\datasets\test_multi_dis"
+    folder2 = r"D:\paper\FCDiffusion_code-main\datasets\test_high_interpre" 
+    output_file = "similarity_results_dis_high.csv"
 
     # Initialize DINO-ViT extractor
     dino_extractor = DinoVitExtractor()

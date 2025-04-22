@@ -74,9 +74,9 @@ Before training, set the **control_mode** parameter in the model_config.yaml con
 - The "mid_pass" mode realizes image scene translation with mid-frequency control.
 - The "high-pass" mode realizes image style translation with high-frequency control.
 
-Then, run the Python script **fcdiffusion_train.py** to start training or to run the pre-train model directly:
+Then, run the Python script *** to start training multi-distillation model directly:
 <pre><code>
-python fcdiffusion_train.py
+python fcdiffusion_distill.py
 </code></pre>
 
 # Parameter setup
@@ -84,7 +84,7 @@ python fcdiffusion_train.py
 2 set the path of teacher model ckpt.
 
 # Model inference
-Inference model for text-driven image-to-image translation by running the Python script **fcdiffusion_test.py**:
+Inference model for text-driven image-to-image translation by running the Python script :
 <pre><code>
 python fcdiffusion_distill_samearch.py
 </code></pre>

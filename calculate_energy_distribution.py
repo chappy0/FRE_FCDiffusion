@@ -151,13 +151,13 @@ def extract_dct_features(image_tensor, control_mode='low_pass', threshold_low=30
     dct_features = dct_2d(image_gray, norm='ortho').cuda()
     
     if control_mode == 'low_pass':
-        filtered_dct = low_pass(dct_features, threshold_low)
+        filtered_dct = low_pass(dct_features, 30)
     elif control_mode == 'mini_pass':
-        filtered_dct = low_pass_and_shuffle(dct_features, threshold_low)
+        filtered_dct = low_pass_and_shuffle(dct_features, 10)
     elif control_mode == 'mid_pass':
-        filtered_dct = high_pass(low_pass(dct_features, threshold_low), threshold_mid)
+        filtered_dct = high_pass(low_pass(dct_features, 20), 40)
     elif control_mode == 'high_pass':
-        filtered_dct = high_pass(dct_features, threshold_high)
+        filtered_dct = high_pass(dct_features, 50)
     else:
         filtered_dct = dct_features
         

@@ -118,7 +118,7 @@ yaml_file_path = "configs/model_config.yaml"
 # ckpt_file_path = "lightning_logs/fcdiffusion_mini_pass_checkpoint/epoch=10-step=34999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=7-step=17999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt"
-ckpt_file_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_mid_pass_checkpoint\epoch=2-step=5999.ckpt'     
+ckpt_file_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_high_pass_checkpoint\epoch=7-step=9999.ckpt'     
 # ckpt_file_path = r"D:\paper\FRE_FCD\lightning_logs\mini\epoch=1-step=2999.ckpt"
 # ckpt_file_path = "lightning_logs_SA/fcdiffusion_mid_pass_checkpoint\epoch=0-step=1999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_high_pass_checkpoint\epoch=3-step=12999.ckpt"
