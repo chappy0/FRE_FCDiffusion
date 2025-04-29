@@ -118,7 +118,7 @@ yaml_file_path = "configs/model_config.yaml"
 # ckpt_file_path = "lightning_logs/fcdiffusion_mini_pass_checkpoint/epoch=10-step=34999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=7-step=17999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt"
-ckpt_file_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_high_pass_checkpoint\epoch=7-step=9999.ckpt'     
+ckpt_file_path = r'D:\paper\FRE_FCD\lightning_logs_SA\fcdiffusion_mini_pass_checkpoint\epoch=3-step=9999.ckpt'     
 # ckpt_file_path = r"D:\paper\FRE_FCD\lightning_logs\mini\epoch=1-step=2999.ckpt"
 # ckpt_file_path = "lightning_logs_SA/fcdiffusion_mid_pass_checkpoint\epoch=0-step=1999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_high_pass_checkpoint\epoch=3-step=12999.ckpt"
@@ -162,14 +162,21 @@ def traverse_images_and_texts(directory):
     return image_files, text_contents
   
 # 使用示例  
-directory_path =r'D:\paper\FCDiffusion_code-main\datasets\test'   # 替换为你的文件夹路径  
-image_files, text_contents = traverse_images_and_texts(directory_path)  
+# directory_path =r'D:\paper\FCDiffusion_code-main\datasets\test'   # 替换为你的文件夹路径  
+# image_files, text_contents = traverse_images_and_texts(directory_path)  
 # image_files, text_contents = ["/home/apulis-dev/userdata/FCDiffusion_code/datasets/test_sub/image_1059.jpg"],["Picture The sky, Clouds, The city, Machine, The building, Art, The airfield, The plane, Mafia, Definitive …"]
+image_files, text_contents = [r"D:\paper\results\surui\1.png",r"D:\paper\results\surui\2.png",r"D:\paper\results\surui\3.png",
+                              r"D:\paper\results\surui\4.png",r"D:\paper\results\surui\5.png",
+                              r"D:\paper\results\surui\6.png"],["a zebra and a giraffe",
+                            "a zebra and a giraffe","a zebra and a giraffe"
+                            ,'an elephant standing next to a pink bench',
+                            'an elephant standing next to a pink bench'
+                            ,'an elephant standing next to a pink bench']
 test_res_num = 1
 
 # 打印所有图片文件的路径  
 # print("Image files:") 
-repath = r"D:\paper\FCDiffusion_code-main\datasets\test_low_interpre"    #reconstruction_EXA" 
+repath = r"D:\paper\FCDiffusion_code-main\datasets\test_distangle"    #reconstruction_EXA" 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  
@@ -183,7 +190,7 @@ for image_file,text_content in zip(image_files,text_contents):
     
     #print(f"img:{test_img_path},target_prompt:{target_prompt}")
     dataset = TestDataset(test_img_path, target_prompt, test_res_num)
-    dataloader = DataLoader(dataset, num_workers=0, batch_size=1, shuffle=True)
+    dataloader = DataLoader(dataset, num_workers=0, batch_size=8, shuffle=True)
     
         
     for step, batch in enumerate(dataloader):

@@ -7,10 +7,10 @@ from einops import rearrange
 from typing import Optional, Any
 
 from ldm.modules.attention import MemoryEfficientCrossAttention
-from ldm.modules.diffusionmodules.sige.nn.base import SIGEConv2d, SIGEModule
-from ldm.modules.diffusionmodules.sige.nn.common import my_group_norm
-from ldm.modules.diffusionmodules.sige.nn.gather import Gather
-from ldm.modules.diffusionmodules.sige.nn.scatter import Scatter
+# from ldm.modules.diffusionmodules.sige.nn.base import SIGEConv2d, SIGEModule
+# from ldm.modules.diffusionmodules.sige.nn.common import my_group_norm
+# from ldm.modules.diffusionmodules.sige.nn.gather import Gather
+# from ldm.modules.diffusionmodules.sige.nn.scatter import Scatter
 
 try:
     import xformers
@@ -281,79 +281,79 @@ class MemoryEfficientCrossAttentionWrapper(MemoryEfficientCrossAttention):
         return x + out
 
 
-class SIGEAttnBlock(SIGEModule):
-    def __init__(self, in_channels, block_size=4):
-        super(SIGEAttnBlock, self).__init__()
-        self.in_channels = in_channels
-        self.block_size = block_size
+# class SIGEAttnBlock(SIGEModule):
+#     def __init__(self, in_channels, block_size=4):
+#         super(SIGEAttnBlock, self).__init__()
+#         self.in_channels = in_channels
+#         self.block_size = block_size
 
-        self.norm = Normalize(in_channels)
-        self.q = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
-        self.k = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
-        self.v = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
-        self.proj_out = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+#         self.norm = Normalize(in_channels)
+#         self.q = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+#         self.k = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+#         self.v = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+#         self.proj_out = SIGEConv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
 
-        self.gather = Gather(self.q, block_size=block_size)
-        self.k_scatter = Scatter(self.gather)
-        self.v_scatter = Scatter(self.gather)
+#         self.gather = Gather(self.q, block_size=block_size)
+#         self.k_scatter = Scatter(self.gather)
+#         self.v_scatter = Scatter(self.gather)
 
-        self.out_scatter = Scatter(self.gather)
+#         self.out_scatter = Scatter(self.gather)
 
-        self.scale, self.shift = None, None
+#         self.scale, self.shift = None, None
 
-    def forward(self, x):
-        h_ = x
+#     def forward(self, x):
+#         h_ = x
 
-        if self.mode == "full":
-            h_ = self.gather(h_)
-            h_, scale, shift = my_group_norm(h_, self.norm)
-            self.scale, self.shift = scale, shift
-        elif self.mode in ["sparse", "profile"]:
-            h_ = self.gather(h_, self.scale.view(1, -1, 1, 1), self.shift.view(1, -1, 1, 1))
-        else:
-            raise NotImplementedError
+#         if self.mode == "full":
+#             h_ = self.gather(h_)
+#             h_, scale, shift = my_group_norm(h_, self.norm)
+#             self.scale, self.shift = scale, shift
+#         elif self.mode in ["sparse", "profile"]:
+#             h_ = self.gather(h_, self.scale.view(1, -1, 1, 1), self.shift.view(1, -1, 1, 1))
+#         else:
+#             raise NotImplementedError
 
-        q = self.q(h_)  # [b * nb, c, bh, bw]
-        k = self.k(h_)
-        k = self.k_scatter(k)
-        v = self.v(h_)
-        v = self.v_scatter(v)
+#         q = self.q(h_)  # [b * nb, c, bh, bw]
+#         k = self.k(h_)
+#         k = self.k_scatter(k)
+#         v = self.v(h_)
+#         v = self.v_scatter(v)
 
-        if self.mode == "full":
-            b, c, h, w = q.shape
-            q = q.reshape(b, c, h * w)
-            q = q.permute(0, 2, 1)  # b,hw,c
-        elif self.mode in ["sparse", "profile"]:
-            b = x.size(0)
-            _, c, bh, bw = q.shape
-            q = q.reshape(b, -1, c, self.block_size * self.block_size)
-            q = q.permute(0, 1, 3, 2)  # [b, nb, hw, c]
-            q = q.reshape(b, -1, c)  # [b, nb * hw, c]
-        else:
-            raise NotImplementedError
-        b, c, h, w = k.shape
-        k = k.reshape(b, c, h * w)  # b,c,hw
-        w_ = torch.bmm(q, k)  # b,nt,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
-        w_ = w_ * (int(c) ** (-0.5))
-        w_ = nn.functional.softmax(w_, dim=2)
+#         if self.mode == "full":
+#             b, c, h, w = q.shape
+#             q = q.reshape(b, c, h * w)
+#             q = q.permute(0, 2, 1)  # b,hw,c
+#         elif self.mode in ["sparse", "profile"]:
+#             b = x.size(0)
+#             _, c, bh, bw = q.shape
+#             q = q.reshape(b, -1, c, self.block_size * self.block_size)
+#             q = q.permute(0, 1, 3, 2)  # [b, nb, hw, c]
+#             q = q.reshape(b, -1, c)  # [b, nb * hw, c]
+#         else:
+#             raise NotImplementedError
+#         b, c, h, w = k.shape
+#         k = k.reshape(b, c, h * w)  # b,c,hw
+#         w_ = torch.bmm(q, k)  # b,nt,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
+#         w_ = w_ * (int(c) ** (-0.5))
+#         w_ = nn.functional.softmax(w_, dim=2)
 
-        v = v.reshape(b, c, h * w)
-        w_ = w_.permute(0, 2, 1)  # b,hw,nt (first hw of k, second of q)
-        h_ = torch.bmm(v, w_)  # b, c,nt (hw of q) h_[b,c,j] = sum_i v[b,c,i] w_[b,i,j]
-        if self.mode == "full":
-            h_ = h_.reshape(b, c, h, w)
-            h_ = self.proj_out(h_)
-            h_ = self.out_scatter(h_, x)
-        elif self.mode in ["sparse", "profile"]:
-            # h_ [b, c, nb*bh*bw] -> [b * nb, c, bh, bw]
-            h_ = h_.reshape(b, c, -1, self.block_size, self.block_size)
-            h_ = h_.permute(0, 2, 1, 3, 4)
-            h_ = h_.reshape(-1, c, self.block_size, self.block_size)
-            h_ = self.proj_out(h_)
-            h_ = self.out_scatter(h_, x)
-        else:
-            raise NotImplementedError
-        return h_
+#         v = v.reshape(b, c, h * w)
+#         w_ = w_.permute(0, 2, 1)  # b,hw,nt (first hw of k, second of q)
+#         h_ = torch.bmm(v, w_)  # b, c,nt (hw of q) h_[b,c,j] = sum_i v[b,c,i] w_[b,i,j]
+#         if self.mode == "full":
+#             h_ = h_.reshape(b, c, h, w)
+#             h_ = self.proj_out(h_)
+#             h_ = self.out_scatter(h_, x)
+#         elif self.mode in ["sparse", "profile"]:
+#             # h_ [b, c, nb*bh*bw] -> [b * nb, c, bh, bw]
+#             h_ = h_.reshape(b, c, -1, self.block_size, self.block_size)
+#             h_ = h_.permute(0, 2, 1, 3, 4)
+#             h_ = h_.reshape(-1, c, self.block_size, self.block_size)
+#             h_ = self.proj_out(h_)
+#             h_ = self.out_scatter(h_, x)
+#         else:
+#             raise NotImplementedError
+#         return h_
 
 def make_attn(in_channels, attn_type="vanilla", block_size=4,attn_kwargs=None):
     assert attn_type in ["vanilla", "vanilla-xformers", "memory-efficient-cross-attn", "linear", "none","sige"], f'attn_type {attn_type} unknown'

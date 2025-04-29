@@ -34,7 +34,7 @@ model:
         transformer_depth: 1
         context_dim: 1024
         legacy: False
-        use_external_attention: True
+        use_external_attention: False
 
     unet_config:
       target: fcdiffusion.fcdiffusion.ControlledUnetModel
@@ -53,7 +53,7 @@ model:
         transformer_depth: 1
         context_dim: 1024
         legacy: False
-        use_external_attention: True
+        use_external_attention: False
 
 
 

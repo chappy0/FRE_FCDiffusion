@@ -1,7 +1,7 @@
 import torch
 import torch as th
 import torch.nn as nn
-from tools.dct_util import dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
+from tools.dct_util import DCTBasisCache, dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
 import os
 import sys
 from ldm.modules.diffusionmodules.util import (
@@ -361,7 +361,8 @@ class FCDiffusion(LatentDiffusion):
         z0 = z0.to(device)
         # c = {k: [t.to(device) for t in v] for k, v in c.items()}
         #print(f"fcd z0 shape: {z0.shape,bs}") 
-        z0_dct = dct_2d(z0, norm='ortho')
+        dct_cache = DCTBasisCache(max_cache_size=8)
+        z0_dct = dct_2d(z0, norm='ortho',dct_cache=dct_cache)
         if self.control_mode == 'low_pass':
             z0_dct_filter = low_pass(z0_dct, 30)      # the threshold value can be adjusted
         elif self.control_mode == 'mini_pass':
