@@ -241,7 +241,7 @@ def traverse_images_and_texts(directory):
     return data_pairs
 
 if __name__ == "__main__":
-    # --- 1. 配置 ---
+    # --- 1. Setup ---
     teacher_config_path = 'configs/model_config.yaml'
     student_config_path = 'configs/student_model_config.yaml'
     
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     TEACHER_CKPT_PATH = ""
     STUDENT_BASE_CKPT_PATH = '/path/to/your pre student model'
 
-    # --- 2. 实例化新的解耦蒸馏器 ---
+    # --- 2."Instantiate a new Decoupled Distiller."
     model = DecoupledDistiller(
         teacher_config_path=teacher_config_path,
         teacher_ckpt_path=TEACHER_CKPT_PATH,
