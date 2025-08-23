@@ -47,15 +47,7 @@ for k in scratch_dict.keys():
         target_dict[k] = scratch_dict[k].clone()
         print(f'These weights are newly added: {k}')
 
-# for key in list(target_dict.keys()):  # 使用 list() 避免遍历时修改字典
-#     if "proj_in.weight" in key or "proj_out.weight" in key:  # 根据实际层名调整匹配规则
-#         # 获取原始权重形状
-#         original_weight = target_dict[key]
-#         out_ch, in_ch = original_weight.shape[:2]
-        
-#         # 将 2D 权重转换为 4D（适用于 Conv2d 1x1）
-#         target_dict[key] = original_weight.view(out_ch, in_ch, 1, 1)
-        
+
 model.load_state_dict(target_dict, strict=False)
 torch.save(model.state_dict(), output_path)
 print('Done.')
