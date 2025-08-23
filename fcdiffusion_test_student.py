@@ -13,20 +13,18 @@ from ldm.util import instantiate_from_config
 yaml_file_path = "configs/student_model_config.yaml"
 
 
-# STUDENT_CKPT_PATH = "lightning_logs/decoupled_distill_low_pass/your_trained_student_checkpoint.ckpt"
-ckpt_file_path ='/home/apulis-dev/userdata/FCDiffusion_code/lightning_logs/decoupled_distill_low_pass/epoch=38-step=68249-val_loss=12.1872.ckpt'  #mini
+
+ckpt_file_path ='lightning_logs/decoupled_distill_low_pass/your_trained_student_checkpoint.ckpt' 
 
 
 # # 3. setup the interference
-# TEST_IMAGE_PATH = 'datasets/test_sub_200'  # 要翻译的源图片路径
+# TEST_IMAGE_PATH = 'datasets/test_sub_200'  # replace the path to your source images
 
-
-# ----------------
 
 def load_student_model_from_distill_ckpt(config, ckpt_path, device=torch.device("cuda"), verbose=True):
     """
-    专门用于从蒸馏器(DecoupledDistiller)保存的checkpoint中加载学生模型。
-    它会自动处理"student_model."前缀。
+    Specifically designed for loading the student model from checkpoints saved by the DecoupledDistiller.
+    It automatically handles the "student_model." prefix.
     """
     print(f"Loading distilled student model from: {ckpt_path}")
     
