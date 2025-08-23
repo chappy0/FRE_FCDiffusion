@@ -9,4 +9,5 @@ distillation_logs/*
 *.txt
 *.csv
 *.ckpt
+*.png
 

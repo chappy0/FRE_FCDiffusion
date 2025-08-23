@@ -14,7 +14,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 from fcdiffusion.fcdiffusion import FCDiffusion, FreqControlNet, ControlledUnetModel
-from fcdiffusion.dataset import TrainDataset  # 假设 smart_resize_and_crop 在 dataset.py 中
+from fcdiffusion.dataset import TrainDataset  
 from fcdiffusion.logger import DistillationImageLogger
 from ldm.util import instantiate_from_config
 from fcdiffusion.model import load_state_dict
@@ -32,7 +32,7 @@ def add_hook(net, mem, mapping_layers):
             m.register_forward_hook(get_activation(mem, n))
 
 # ----------------------------------------------------------------------------------
-# 2. 核心蒸馏器：DecoupledDistiller
+# 2.DecoupledDistiller
 # ----------------------------------------------------------------------------------
 class DecoupledDistiller(pl.LightningModule):
     def __init__(
@@ -43,12 +43,12 @@ class DecoupledDistiller(pl.LightningModule):
         student_ckpt_path: str,
         distill_mode: str,
         learning_rate: float,
-        # --- 新增的、用于两阶段训练的参数 ---
-        stage_switch_step: int,      # 定义第二阶段开始的步数
-        lambda_sd_stage1: float,     # 第一阶段 loss_sd 的权重
+
+        stage_switch_step: int,      
+        lambda_sd_stage1: float,     
         lambda_kd_unet_stage1: float,
         lambda_kd_control_stage1: float,
-        lambda_sd_stage2: float,     # 第二阶段 loss_sd 的权重
+        lambda_sd_stage2: float,     
         lambda_kd_unet_stage2: float,
         lambda_kd_control_stage2: float,
     ):
@@ -56,7 +56,7 @@ class DecoupledDistiller(pl.LightningModule):
         self.save_hyperparameters()
         self.automatic_optimization = True
 
-        # --- 模型加载 ---
+        # --- load model---
         print("Loading Student Model...")
         student_cfg = OmegaConf.load(self.hparams.student_config_path)
         self.student_model = self.load_model_from_config(student_cfg, self.hparams.student_ckpt_path)
@@ -69,10 +69,10 @@ class DecoupledDistiller(pl.LightningModule):
         self.teacher_model.requires_grad_(False)
         self.teacher_model.eval()
 
-        # --- 自动进行权重迁移 ---
+        # --- migrate state ---
         self._migrate_compatible_weights()
 
-        # --- 冻结与Hooks ---
+        # --- freeze and Hooks ---
         if hasattr(self.student_model, 'first_stage_model'):
             self.student_model.first_stage_model.requires_grad_(False)
         if hasattr(self.student_model, 'cond_stage_model'):
@@ -172,9 +172,7 @@ class DecoupledDistiller(pl.LightningModule):
         return total_loss
 
     def validation_step(self, batch, batch_idx):
-        # --- CRITICAL CHANGE: Use stage 1 weights for validation ---
-        # This is because validation can happen at any point. Using stage 1 weights provides a consistent benchmark.
-        # The sanity check at the beginning (global_step=0) will now work correctly.
+        # Use stage 1 weights for validation ---
         lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1)
         
         total_val_loss, _, _, _ = self._calculate_losses(batch, *lambdas)
@@ -204,7 +202,7 @@ class DecoupledDistiller(pl.LightningModule):
         return model
 
 # ----------------------------------------------------------------------------------
-# 3. 数据集与主程序
+# 3. dataset and main function
 # ----------------------------------------------------------------------------------
 class ValidationDataset(Dataset):
     def __init__(self, data_list):
@@ -216,8 +214,7 @@ class ValidationDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         try:
-            # 使用我们之前修正的智能裁剪函数
-            # source = smart_resize_and_crop(item['image_path']) 
+
             source = Image.open(item['image_path']).convert("RGB").resize((512, 512))
             source = np.array(source).astype(np.uint8)
         except Exception as e:
@@ -261,15 +258,16 @@ if __name__ == "__main__":
         distill_mode=DISTILL_MODE,
         learning_rate=1e-6,
         
-        # --- 设置两阶段的权重和切换点 ---
-        stage_switch_step=300000,           # 在30000步时从第一阶段切换到第二阶段
+        # --- Set the weights and transition points for the two phases 
+        # (adjust these values based on your own hardware and data conditions).---
+        stage_switch_step=30000,           
         
-        # 第一阶段权重：侧重模仿 (平衡初始的加权后损失)
+        # Weights for the first phase: focus on imitation (balance the weighted losses initially).
         lambda_sd_stage1=6,
         lambda_kd_unet_stage1=0.8,
         lambda_kd_control_stage1=7,
         
-        # 第二阶段权重：侧重自身质量 (大幅提高loss_sd权重)
+        # Weights for the second phase: focus on self-quality (significantly increase the weight of loss_sd).
         lambda_sd_stage2=30,
         lambda_kd_unet_stage2=0.1,         
         lambda_kd_control_stage2=0.2,
@@ -310,7 +308,7 @@ if __name__ == "__main__":
         log_every_n_steps=50,
         val_check_interval=1.0, 
         gradient_clip_val=1.0,
-        resume_from_checkpoint='/path/to/your checkpoint' # 如果需要断点续训，请指定路径
+        resume_from_checkpoint='/path/to/your checkpoint' #If resuming training from a breakpoint is needed, please specify the path.
     )
     
     print(f"Starting Decoupled Distillation for mode: {DISTILL_MODE}...")
