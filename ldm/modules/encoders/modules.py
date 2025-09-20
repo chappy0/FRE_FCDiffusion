@@ -188,7 +188,7 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         super().__init__()
         assert layer in self.LAYERS
         import os
-        local_path = os.path.dirname(__file__) + '/../../../CLIP-ViT-H-14/open_clip_pytorch_model.bin'
+        local_path = os.path.dirname(__file__) + '/../../../../DGM/CLIP-ViT-H-14/open_clip_pytorch_model.bin'
         model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=local_path)
         del model.visual
         self.model = model
