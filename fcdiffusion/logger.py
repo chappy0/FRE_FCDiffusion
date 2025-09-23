@@ -94,3 +94,121 @@ class ImageLogger(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
         if not self.disabled:
             self.log_img(pl_module, batch, batch_idx, split="training")
+
+
+# -------------------------------------------------
+# 新增的、为我们多任务模型定制的ImageLogger
+# -------------------------------------------------
+class MultiTaskImageLogger(ImageLogger):
+    """
+    一个特殊的ImageLogger，用于在每个记录点，
+    为所有四个频域任务生成并保存一次图像。
+    """
+    @rank_zero_only
+    def log_img(self, pl_module, batch, batch_idx, split="train"):
+        # 检查频率等条件
+        if not self.check_frequency(batch_idx):
+            return
+        
+        is_train = pl_module.training
+        if is_train:
+            pl_module.eval()
+
+        with torch.no_grad():
+            # 核心改动：循环所有任务模式，并为每种模式生成图像
+            for mode in pl_module.task_modes:
+                print(f"  Logging images for task: {mode}")
+                
+                # 在调用log_images前，先设置好模型的模式
+                pl_module.student_model.control_mode = mode
+                
+                # 调用模型自身的log_images方法
+                images = pl_module.student_model.log_images(
+                    batch, N=self.max_images, **self.log_images_kwargs
+                )
+                
+                # 保存图像 (复用您原来的log_local方法)
+                # 我们在文件名中加入mode来区分
+                for k in images:
+                    grid = torchvision.utils.make_grid(images[k], nrow=4)
+                    if self.rescale:
+                        grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1
+                    grid = grid.transpose(0, 1).transpose(1, 2).squeeze(-1)
+                    # grid = grid.numpy()
+                    grid = grid.cpu().numpy()
+                    grid = (grid * 255).astype(np.uint8)
+                    
+                    # 修改文件名以包含任务模式
+                    filename = "gs-{:06}_e-{:06}_b-{:06}_mode-{}_{}.png".format(
+                        pl_module.global_step, pl_module.current_epoch, batch_idx, mode, k
+                    )
+                    
+                    root = os.path.join(self.root_path, 'image_log', split)
+                    path = os.path.join(root, filename)
+                    os.makedirs(os.path.split(path)[0], exist_ok=True)
+                    Image.fromarray(grid).save(path)
+
+        if is_train:
+            pl_module.train()
+
+    def check_frequency(self, check_idx):
+        # 简化频率检查，使其在每个log_every_n_steps时都触发
+        return (check_idx + 1) % self.batch_freq == 0
+
+
+# -------------------------------------------------
+# 修正后的、为我们单任务蒸馏定制的ImageLogger
+# -------------------------------------------------
+class DistillationImageLogger(ImageLogger):
+    """
+    一个适配单任务蒸馏的ImageLogger。
+    它不再循环多个任务，而是直接为当前正在蒸馏的模式生成图像。
+    """
+    @rank_zero_only
+    def log_img(self, pl_module, batch, batch_idx, split="train"):
+        # 检查频率等条件 (从基类继承或保持不变)
+        if not self.check_frequency(batch_idx):
+            return
+        
+        is_train = pl_module.training
+        if is_train:
+            pl_module.eval()
+
+        with torch.no_grad():
+            # 【核心修正 1】: 不再需要 for 循环
+            # 我们直接让 pl_module (即 DecoupledDistiller) 调用它自己的 log_images 方法。
+            # DecoupledDistiller 的 control_mode 在初始化时已经设定好了。
+            
+            # 为了让这个调用生效，我们需要在 DecoupledDistiller 中添加一个 log_images 方法
+            if not hasattr(pl_module, "log_images"):
+                print("ERROR: The training module (DecoupledDistiller) must have a 'log_images' method.")
+                return
+
+            print(f"  Logging images for current distillation mode...")
+            images = pl_module.log_images(batch, N=self.max_images, **self.log_images_kwargs)
+
+            # 【核心修正 2】: 获取当前模式名用于保存文件
+            current_mode = pl_module.hparams.distill_mode
+
+            # 保存图像 (复用您原来的log_local方法，但文件名稍作修改)
+            for k in images:
+                if isinstance(images[k], torch.Tensor):
+                    grid = torchvision.utils.make_grid(images[k], nrow=4)
+                    if self.rescale:
+                        grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1
+                    grid = grid.transpose(0, 1).transpose(1, 2).squeeze(-1)
+                    grid = grid.cpu().numpy()
+                    grid = (grid * 255).astype(np.uint8)
+                    
+                    # 修改文件名以包含当前的任务模式
+                    filename = "gs-{:06}_e-{:06}_b-{:06}_mode-{}_{}.png".format(
+                        pl_module.global_step, pl_module.current_epoch, batch_idx, current_mode, k
+                    )
+                    
+                    root = os.path.join(self.root_path, 'image_log', split)
+                    path = os.path.join(root, filename)
+                    os.makedirs(os.path.split(path)[0], exist_ok=True)
+                    Image.fromarray(grid).save(path)
+
+        if is_train:
+            pl_module.train()

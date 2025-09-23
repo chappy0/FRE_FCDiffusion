@@ -214,6 +214,7 @@ class TrainDataset(Dataset):
         self.image_cache = LimitedCache(max_size=cache_size)
 
         # Load metadata from the JSON file
+        # data_file = data_file + '../DGM'
         try:
             with open(data_file, 'rt') as f:
                 for line in f:
@@ -236,7 +237,7 @@ class TrainDataset(Dataset):
         # item['path'] = img_path.split('images')[1]
         # print(f"img_path:{img_path}")
         # item['path'] = img_path.split('6.5')[1]
-        item['img_path'] = img_path  # Store the full path for lazy loading
+        item['img_path'] = "/home/apulis-dev/userdata/DGM/" + img_path  # Store the full path for lazy loading
         return True
 
     def __len__(self):

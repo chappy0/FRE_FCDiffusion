@@ -1,8 +1,5 @@
 
 
-# import torch
-
-
 
 import torch
 import torch.nn.functional as F
@@ -106,15 +103,10 @@ class DecoupledDistiller(pl.LightningModule):
             ['model.diffusion_model.middle_block'] +
             [f'model.diffusion_model.output_blocks.{i}' for i in range(12)]
         )
-        # self.fcnet_block_layers = (
-        #     [f'model.control_model.input_blocks.{i}' for i in range(12)] +
-        #     ['model.control_model.middle_block'] +
-        #     [f'model.control_model.output_blocks.{i}' for i in range(12)]
-        # )
         self.fcnet_block_layers = (
-            [f'control_model.input_blocks.{i}' for i in range(12)] +
-            ['control_model.middle_block'] +
-            [f'control_model.output_blocks.{i}' for i in range(12)]
+            [f'model.control_model.input_blocks.{i}' for i in range(12)] +
+            ['model.control_model.middle_block'] +
+            [f'model.control_model.output_blocks.{i}' for i in range(12)]
         )
         add_hook(self.teacher_model, self.acts_tea_unet, self.unet_block_layers)
         add_hook(self.teacher_model, self.acts_tea_fcnet, self.fcnet_block_layers)
@@ -268,7 +260,7 @@ if __name__ == "__main__":
     
     DISTILL_MODE = "low_pass"
     TEACHER_CKPT_PATH = "/home/apulis-dev/userdata/DGM/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=3-step=75999.ckpt"
-    STUDENT_BASE_CKPT_PATH = './models/FCDiffusion_ini_dha2.ckpt'
+    STUDENT_BASE_CKPT_PATH = './models/FCDiffusion_ini_ea.ckpt'
 
     # --- 2. Instantiate a new Decoupled Distiller.
     model = DecoupledDistiller(
@@ -284,15 +276,11 @@ if __name__ == "__main__":
         stage_switch_step=300000,           
         
         # Weights for the first phase: focus on imitation (balance the weighted losses initially).
-        # lambda_sd_stage1=6,
-        # lambda_kd_unet_stage1=0.8,
-        # lambda_kd_control_stage1=7,
-        # lambda_kd_fcnet_stage1=0.5,
+        lambda_sd_stage1=6,
+        lambda_kd_unet_stage1=0.8,
+        lambda_kd_control_stage1=7,
+        lambda_kd_fcnet_stage1=0.5,
         
-        lambda_sd_stage1=5,
-        lambda_kd_unet_stage1=0.25,
-        lambda_kd_control_stage1=1.25,
-        lambda_kd_fcnet_stage1=0.08,
         # Weights for the second phase: focus on self-quality (significantly increase the weight of loss_sd).
         lambda_sd_stage2=30,
         lambda_kd_unet_stage2=0.1,         
@@ -301,10 +289,10 @@ if __name__ == "__main__":
     )
 
 
-    train_dataset = TrainDataset('../DGM/datasets/training_data_s.json', cache_size=100)
-    train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=16, shuffle=True)
+    train_dataset = TrainDataset('../DGM/datasets/training_data.json', cache_size=100)
+    train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=8, shuffle=True)
     
-    validation_folder_path = '../DGM/datasets/test_sub_200'
+    validation_folder_path = '../DGM/datasets/test_sub_600'
     val_data_list = traverse_images_and_texts(validation_folder_path)
     val_dataloader = None
     if val_data_list:
@@ -312,7 +300,7 @@ if __name__ == "__main__":
         def collate_fn(batch):
             batch = list(filter(lambda x: x is not None, batch))
             return torch.utils.data.dataloader.default_collate(batch) if batch else None
-        val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=16, shuffle=False, collate_fn=collate_fn)
+        val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=4, shuffle=False, collate_fn=collate_fn)
 
 
     checkpoint_callback = ModelCheckpoint(

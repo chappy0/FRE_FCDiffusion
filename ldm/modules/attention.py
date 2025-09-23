@@ -1723,7 +1723,7 @@ class BasicTransformerBlock(nn.Module):
         "softmax": CrossAttention,  # vanilla attention
         "softmax-xformers": MemoryEfficientCrossAttention
     }
-    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
+    def __init__(self, dim, n_heads, d_head,time_embed_dim, use_dynamic_hybrid_attention=False, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
                  disable_self_attn=False,use_external_attention=False,use_RMT=False):
         super().__init__()
         attn_mode = "softmax-xformers" if XFORMERS_IS_AVAILBLE else "softmax"
@@ -1738,7 +1738,11 @@ class BasicTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
 
         if not self.disable_self_attn:
-            if use_external_attention: 
+            if use_dynamic_hybrid_attention:
+                print("Using Dynamic Hybrid Attention")
+                self.attn1 = DynamicHybridAttention(query_dim=dim, n_heads=n_heads, d_head=d_head, time_embed_dim=time_embed_dim,dropout=dropout)
+
+            elif use_external_attention: 
                 # print(f"dim:{dim},heads:{n_head},d_head:{d_head}")
                 print("use_external_attention")
                 self.attn1 = MultiHeadExternalAttention(dim,8,64)
@@ -1778,14 +1782,19 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, context=None,t_embedding=None):
+        return checkpoint(self._forward, (x, context, t_embedding), self.parameters(), self.checkpoint)
 
-    def _forward(self, x, context=None):
+    def _forward(self, x, context=None, t_embedding=None):
+        # print("forward")
+        if isinstance(self.attn1, DynamicHybridAttention):
+        # Pass the t_embedding to the DHA module
+            # print('forward using DynamicHybridAttention')
+            x = self.attn1(self.norm1(x), t_embedding=t_embedding) + x
 
         ##print(f"BT xshape:{x.shape}")
-        if isinstance(self.attn1, MultiHeadExternalAttention):
-            ##print(f"before attn1 x shape:{x.shape}")
+        elif isinstance(self.attn1, MultiHeadExternalAttention):
+            # print(f"forward with EA")
             x = self.attn1(self.norm1(x)) + x
             # x = x.permute(2,1,0)
             # #print(f"after attn1 x shape:{x.shape}")
@@ -1833,12 +1842,61 @@ class BasicTransformerBlock(nn.Module):
         return x
 
 
+# Add this new class in attention.py
+
+class DynamicHybridAttention(nn.Module):
+    """
+    Dynamically interpolates between Self-Attention (SA) and External Attention (EA)
+    based on the timestep embedding.
+    """
+    def __init__(self, query_dim, n_heads, d_head, time_embed_dim, dropout=0.):
+        super().__init__()
+        # 1. Instantiate the Self-Attention Module (using your existing CrossAttention)
+        self.sa_attn = CrossAttention(query_dim=query_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+
+        # 2. Instantiate the External Attention Module
+        self.ea_attn = MultiHeadExternalAttention(in_channels=query_dim, num_heads=n_heads, M=d_head)
+
+        # 3. Define the Gating Network
+
+        # time_embed_dim = 1280 # 
+        self.gating_network = nn.Sequential(
+            nn.Linear(time_embed_dim, 64),
+            nn.SiLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, t_embedding=None):
+        # print(f"t_embedding:{t_embedding}")
+        if t_embedding is None:
+            # Default to full Self-Attention if no timestep is provided
+            return self.sa_attn(x)
+
+        # Calculate the blend factor alpha from the timestep embedding
+        # x shape: (B, N, C), t_embedding shape: (B, T_emb_dim)
+        alpha = self.gating_network(t_embedding)  # Shape: (B, 1)
+
+        # Unsqueeze alpha to make it broadcastable with the attention output
+        # Shape becomes (B, 1, 1) to multiply with (B, N, C)
+        alpha = alpha.unsqueeze(-1)
+        # print(f"DHA alpha:{alpha}")
+        # print(f"DHA alpha:{alpha}", file=sys.stderr)
+
+        # Calculate both attention outputs
+        sa_out = self.sa_attn(x)
+        ea_out = self.ea_attn(x)
+
+        # Dynamically blend the outputs
+        output = alpha * sa_out + (1 - alpha) * ea_out
+        return output
 
 class SpatialTransformer(nn.Module):
-    def __init__(self, in_channels, n_heads, d_head,
+    def __init__(self, in_channels, n_heads, d_head,time_embed_dim,
                  depth=1, dropout=0., context_dim=None,
                  disable_self_attn=False, use_linear=False,
-                 use_checkpoint=True,  use_external_attention=False):
+                 use_checkpoint=True,  use_external_attention=False,
+                 use_dynamic_hybrid_attention=False):
         super().__init__()
         if exists(context_dim) and not isinstance(context_dim, list):
             context_dim = [context_dim]
@@ -1852,7 +1910,8 @@ class SpatialTransformer(nn.Module):
 
         self.transformer_blocks = nn.ModuleList(
             [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim[d] if context_dim else None,
-                                   disable_self_attn=disable_self_attn, checkpoint=use_checkpoint,use_external_attention=use_external_attention)
+                                   disable_self_attn=disable_self_attn, checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                   time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=use_dynamic_hybrid_attention)
              for d in range(depth)]
         )
         if not use_linear:
@@ -1861,7 +1920,28 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(inner_dim, in_channels))
         self.use_linear = use_linear
 
-    def forward(self, x, context=None):
+    # def forward(self, x, context=None):
+    #     if not isinstance(context, list):
+    #         context = [context]  # b, n, context_dim
+    #     b, c, h, w = x.shape
+    #     x_in = x
+    #     x = self.norm(x)
+    #     if not self.use_linear:
+    #         x = self.proj_in(x)
+    #     x = rearrange(x, 'b c h w -> b (h w) c').contiguous()
+    #     if self.use_linear:
+    #         x = self.proj_in(x)  # b, hw, inner_dim
+    #     for i, block in enumerate(self.transformer_blocks):
+    #         x = block(x, context=context[i] if context is not None and i < len(context) else None)
+    #     if self.use_linear:
+    #         x = self.proj_out(x)
+    #     x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
+    #     if not self.use_linear:
+    #         x = self.proj_out(x)
+    #     return x + x_in
+
+
+    def forward(self, x, emb, context=None):
         if not isinstance(context, list):
             context = [context]  # b, n, context_dim
         b, c, h, w = x.shape
@@ -1872,8 +1952,11 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b c h w -> b (h w) c').contiguous()
         if self.use_linear:
             x = self.proj_in(x)  # b, hw, inner_dim
+            
+        # Pass the 'emb' down to the transformer blocks as 't_embedding'
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i] if context is not None and i < len(context) else None)
+            x = block(x, context=context[i] if context is not None and i < len(context) else None, t_embedding=emb)
+
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()

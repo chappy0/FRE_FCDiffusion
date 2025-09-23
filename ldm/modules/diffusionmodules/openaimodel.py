@@ -84,7 +84,8 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context)
+                # x = layer(x, context)
+                x = layer(x, emb, context)
 
             else:
                 x = layer(x)
@@ -550,7 +551,9 @@ class UNetModel(nn.Module):
         disable_middle_self_attn=False,
         use_linear_in_transformer=False,   # True
         adm_in_channels=None,
-        use_external_attention=False
+        use_external_attention=False,
+
+        use_dynamic_hybrid_attention=False
     ):
         super().__init__()
         self.dims = dims
@@ -558,7 +561,7 @@ class UNetModel(nn.Module):
         self.use_new_attention_order = use_new_attention_order
         self.resblock_updown = resblock_updown
         self.context_dim = context_dim
-        print(f"openai use_external_attention:{use_external_attention}")
+        print(f"openai use_dynamic_hybrid_attention:{use_dynamic_hybrid_attention}")
         if use_spatial_transformer:
             assert context_dim is not None, 'Fool!! You forgot to include the dimension of your cross-attention conditioning...'
 
@@ -688,7 +691,8 @@ class UNetModel(nn.Module):
                             ) if not use_spatial_transformer else SpatialTransformer(
                                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                                 disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=use_dynamic_hybrid_attention
                             )
                         )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -745,7 +749,8 @@ class UNetModel(nn.Module):
             ) if not use_spatial_transformer else SpatialTransformer(  # always uses a self-attn
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                             disable_self_attn=disable_middle_self_attn, use_linear=use_linear_in_transformer,
-                            use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                            use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                            time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=use_dynamic_hybrid_attention
                         ),
             ResBlock(
                 ch,
@@ -799,7 +804,8 @@ class UNetModel(nn.Module):
                             ) if not use_spatial_transformer else SpatialTransformer(
                                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                                 disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=use_dynamic_hybrid_attention
                             )
                         )
                 if level and i == self.num_res_blocks[level]:

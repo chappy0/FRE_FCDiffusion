@@ -1,7 +1,7 @@
 import torch
 import torch as th
 import torch.nn as nn
-from tools.dct_util import DCTBasisCache, dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
+from tools.dct_util import  dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
 import os
 import sys
 from ldm.modules.diffusionmodules.util import (
@@ -35,21 +35,30 @@ class ControlledUnetModel(UNetModel):
             print(f"{key}: {value}")
         hs = []
         
-        with torch.no_grad():
-            t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-            emb = self.time_embed(t_emb)
-            h = x.type(self.dtype)
-            # for idx, block in enumerate(self.input_blocks):
-                # print(f"Layer {idx}:")
-                # for sub_idx, sub_block in enumerate(block.children()):
-                #     print(f"Sub-layer {sub_idx}: {sub_block}")
-            for module in self.input_blocks:
-                # print(f"module:{module.__class__.__name__}")
-                # print(f"h,emb,context:{h.shape,emb.shape,context.shape}")
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        emb = self.time_embed(t_emb)
+        h = x.type(self.dtype)
+        for module in self.input_blocks:
+            h = module(h, emb, context)
+            hs.append(h)
+        h = self.middle_block(h, emb, context)
+        
+        # with torch.no_grad():
+        #     t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        #     emb = self.time_embed(t_emb)
+        #     h = x.type(self.dtype)
+        #     # for idx, block in enumerate(self.input_blocks):
+        #         # print(f"Layer {idx}:")
+        #         # for sub_idx, sub_block in enumerate(block.children()):
+        #         #     print(f"Sub-layer {sub_idx}: {sub_block}")
+        #     for module in self.input_blocks:
+        #         # print(f"module:{module.__class__.__name__}")
+        #         # print(f"h,emb,context:{h.shape,emb.shape,context.shape}")
                 
-                h = module(h, emb, context)
-                hs.append(h)
-            h = self.middle_block(h, emb, context)
+        #         h = module(h, emb, context)
+        #         hs.append(h)
+        #     h = self.middle_block(h, emb, context)
+
         # print("hs value:", [value.shape for value in hs])
         if control is not None:
             
@@ -103,7 +112,8 @@ class FreqControlNet(nn.Module):
             num_attention_blocks=None,
             disable_middle_self_attn=False,
             use_linear_in_transformer=False,
-            use_external_attention = False
+            use_external_attention = False,
+            use_dynamic_hybrid_attention=False
     ):
         super().__init__()
         if use_spatial_transformer:
@@ -228,7 +238,8 @@ class FreqControlNet(nn.Module):
                             ) if not use_spatial_transformer else SpatialTransformer(
                                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                                 disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=False
                             )
                         )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -289,7 +300,8 @@ class FreqControlNet(nn.Module):
             ) if not use_spatial_transformer else SpatialTransformer(  # always uses a self-attn
                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                 disable_self_attn=disable_middle_self_attn, use_linear=use_linear_in_transformer,
-                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=False
             ),
             ResBlock(
                 ch,
@@ -361,8 +373,8 @@ class FCDiffusion(LatentDiffusion):
         z0 = z0.to(device)
         # c = {k: [t.to(device) for t in v] for k, v in c.items()}
         #print(f"fcd z0 shape: {z0.shape,bs}") 
-        dct_cache = DCTBasisCache(max_cache_size=8)
-        z0_dct = dct_2d(z0, norm='ortho',dct_cache=dct_cache)
+
+        z0_dct = dct_2d(z0, norm='ortho')
         if self.control_mode == 'low_pass':
             z0_dct_filter = low_pass(z0_dct, 30)      # the threshold value can be adjusted
         elif self.control_mode == 'mini_pass':
