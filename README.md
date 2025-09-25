@@ -1,6 +1,4 @@
-Of course, here is the English version of the README for your project.
 
------
 
 # DKD Project Code
 
