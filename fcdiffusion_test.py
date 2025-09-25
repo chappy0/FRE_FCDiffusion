@@ -77,7 +77,7 @@ def traverse_images_and_texts(directory):
                     text_contents.append((content))  
     return image_files, text_contents
   
-# 使用示例  
+
 directory_path ='/your/source/image/path'   # replace to your path
 image_files, text_contents = traverse_images_and_texts(directory_path)  
 test_res_num = 1
