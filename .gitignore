@@ -10,4 +10,5 @@ distillation_logs/*
 *.csv
 *.ckpt
 image_log/*
+test_gmea_*
 
