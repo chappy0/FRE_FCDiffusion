@@ -1,7 +1,7 @@
 import torch
 import torch as th
 import torch.nn as nn
-from tools.dct_util import DCTBasisCache, dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
+from tools.dct_util import  dct_2d, idct_2d, low_pass, high_pass, low_pass_and_shuffle
 import os
 import sys
 from ldm.modules.diffusionmodules.util import (
@@ -35,22 +35,14 @@ class ControlledUnetModel(UNetModel):
             print(f"{key}: {value}")
         hs = []
         
-        with torch.no_grad():
-            t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-            emb = self.time_embed(t_emb)
-            h = x.type(self.dtype)
-            # for idx, block in enumerate(self.input_blocks):
-                # print(f"Layer {idx}:")
-                # for sub_idx, sub_block in enumerate(block.children()):
-                #     print(f"Sub-layer {sub_idx}: {sub_block}")
-            for module in self.input_blocks:
-                # print(f"module:{module.__class__.__name__}")
-                # print(f"h,emb,context:{h.shape,emb.shape,context.shape}")
-                
-                h = module(h, emb, context)
-                hs.append(h)
-            h = self.middle_block(h, emb, context)
-        # print("hs value:", [value.shape for value in hs])
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        emb = self.time_embed(t_emb)
+        h = x.type(self.dtype)
+        for module in self.input_blocks:
+            h = module(h, emb, context)
+            hs.append(h)
+        h = self.middle_block(h, emb, context)
+        
         if control is not None:
             
             [control_add, control_mul] = control.pop()
@@ -103,7 +95,8 @@ class FreqControlNet(nn.Module):
             num_attention_blocks=None,
             disable_middle_self_attn=False,
             use_linear_in_transformer=False,
-            use_external_attention = False
+            use_external_attention = False,
+            use_dynamic_hybrid_attention=False
     ):
         super().__init__()
         if use_spatial_transformer:
@@ -228,7 +221,8 @@ class FreqControlNet(nn.Module):
                             ) if not use_spatial_transformer else SpatialTransformer(
                                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                                 disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=False
                             )
                         )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -289,7 +283,8 @@ class FreqControlNet(nn.Module):
             ) if not use_spatial_transformer else SpatialTransformer(  # always uses a self-attn
                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                 disable_self_attn=disable_middle_self_attn, use_linear=use_linear_in_transformer,
-                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention
+                use_checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=False
             ),
             ResBlock(
                 ch,
@@ -338,9 +333,6 @@ class FCDiffusion(LatentDiffusion):
 
     def __init__(self, control_stage_config, only_mid_control, control_mode, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        #class_name = self.__class__.__name__
-        #function_name = sys._getframe().f_code.co_name
-        ##print(f"Executing {function_name} in class {class_name}")
 
         self.control_model = instantiate_from_config(control_stage_config)  # FreqControlNet
         self.only_mid_control = only_mid_control
@@ -348,7 +340,7 @@ class FCDiffusion(LatentDiffusion):
         assert control_mode in ['mini_pass', 'low_pass', 'mid_pass', 'high_pass'], \
             'control_mode must be in the list of [\'mini_pass\', \'low_pass\', \'mid_pass\', \'high_pass\'], but get value {0}'.format(control_mode)
         self.control_mode = control_mode
-        self.save_eps_path = "/home/apulis-dev/userdata/FCDiffusion_code/models"
+        self.save_eps_path = ""
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
@@ -361,8 +353,8 @@ class FCDiffusion(LatentDiffusion):
         z0 = z0.to(device)
         # c = {k: [t.to(device) for t in v] for k, v in c.items()}
         #print(f"fcd z0 shape: {z0.shape,bs}") 
-        dct_cache = DCTBasisCache(max_cache_size=8)
-        z0_dct = dct_2d(z0, norm='ortho',dct_cache=dct_cache)
+
+        z0_dct = dct_2d(z0, norm='ortho')
         if self.control_mode == 'low_pass':
             z0_dct_filter = low_pass(z0_dct, 30)      # the threshold value can be adjusted
         elif self.control_mode == 'mini_pass':
@@ -376,62 +368,26 @@ class FCDiffusion(LatentDiffusion):
             control = control[:bs]
         return z0, dict(c_crossattn=[c], c_concat=[control])
 
-    def save_model_structure(self):
-        # 创建保存路径的目录
-        os.makedirs(os.path.dirname(self.model_structure_path), exist_ok=True)
 
-        # 打印模型结构并保存到文件
-        with open(self.model_structure_path, "w") as f:
-            print(self.model.diffusion_model, file=f)
-        #print(f"Model structure saved to {self.model_structure_path}")
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
-        #class_name = self.__class__.__name__
-        #function_name = sys._getframe().f_code.co_name
-        ##print(f"Executing {function_name} in class {class_name}")
-        # #print(f"model:{self.model.diffusion_model}")
-        # self.model_structure_path = '/home/apulis-dev/userdata/FCDiffusion_code/models/modellayer.txt'  # 模型结构保存路径
 
-        # 保存模型结构到文本文件
-        # if self.model_structure_path:
-        #     self.save_model_structure()
-
-
-        # print("c_crossattn shape:", [c.shape for c in cond['c_crossattn']])
-        # print("c_concat shape:", [c.shape for c in cond['c_concat']])
-        # print("start fcd apply_model")
         assert isinstance(cond, dict)
         diffusion_model = self.model.diffusion_model  # ControlledUnetModel
 
         cond_txt = torch.cat(cond['c_crossattn'], 1)
-        # #print(f"x_noisy shape:{x_noisy.shape}")
-        # #print(f"t :{t}")
-        # #print(f"cond_txt shape:{cond_txt.shape}")
 
         if cond['c_concat'] is None:
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=None, only_mid_control=self.only_mid_control)
         else:
             # print("cond['c_concat'] is not None")
             control = self.control_model(x=x_noisy, hint=torch.cat(cond['c_concat'], 1), timesteps=t, context=cond_txt)
-            # #print(f"control length:{len(control)}")
-            # print("Control_add shape2:", [c[0].shape for c in control])  # 打印 control_add 的形状
-            # print("Control_mul shape2:", [c[1].shape for c in control])  # 打印 control_mul 的形状
             control = [[c[0] * scale, c[1] * scale] for c, scale in zip(control, self.control_scales)]
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=control, only_mid_control=self.only_mid_control)
-        
-        # if self.save_eps_path:
-        #     os.makedirs(self.save_eps_path, exist_ok=True)
-        #     filename = os.path.join(self.save_eps_path, f"eps_t_{t[0].item()}.txt")
-        #     np.savetxt(filename, eps.cpu().numpy().flatten(), fmt="%.6f")
-        #     #print(f"Saved eps to {filename}")
-
         return eps
 
     @torch.no_grad()
     def get_unconditional_conditioning(self, N):
-        #class_name = self.__class__.__name__
-        #function_name = sys._getframe().f_code.co_name
-        ##print(f"Executing {function_name} in class {class_name}")
 
         return self.get_learned_conditioning([""] * N)
 
