@@ -281,7 +281,7 @@ if __name__ == "__main__":
         
         # --- Set the weights and transition points for the two phases 
         # (adjust these values based on your own hardware and data conditions).---
-        stage_switch_step=300000,           
+        stage_switch_step=30000,           
         
         # Weights for the first phase: focus on imitation (balance the weighted losses initially).
         # lambda_sd_stage1=6,
@@ -290,18 +290,18 @@ if __name__ == "__main__":
         # lambda_kd_fcnet_stage1=0.5,
         
         lambda_sd_stage1=5,
-        lambda_kd_unet_stage1=0.25,
-        lambda_kd_control_stage1=1.25,
-        lambda_kd_fcnet_stage1=0.08,
+        lambda_kd_unet_stage1=0.04,
+        lambda_kd_fcnet_stage1=0.03,
+        lambda_kd_control_stage1=0.63,
         # Weights for the second phase: focus on self-quality (significantly increase the weight of loss_sd).
-        lambda_sd_stage2=30,
-        lambda_kd_unet_stage2=0.1,         
-        lambda_kd_control_stage2=0.2,
-        lambda_kd_fcnet_stage2=0.1,
+        lambda_sd_stage2=8,
+        lambda_kd_unet_stage2=0.04,         
+        lambda_kd_control_stage2=0.03,
+        lambda_kd_fcnet_stage2=0.63,
     )
 
 
-    train_dataset = TrainDataset('../DGM/datasets/training_data_s.json', cache_size=100)
+    train_dataset = TrainDataset('../DGM/datasets/training_data.json', cache_size=100)
     train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=16, shuffle=True)
     
     validation_folder_path = '../DGM/datasets/test_sub_200'

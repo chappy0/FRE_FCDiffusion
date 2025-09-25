@@ -14,7 +14,7 @@ yaml_file_path = "configs/student_model_config.yaml"
 
 
 
-ckpt_file_path = '/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=3-step=2923-val_loss=2.2816.ckpt' #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=1-step=1461-val_loss=11.0918.ckpt'  #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=27-step=48999-val_loss=14.7525.ckpt' 
+ckpt_file_path = 'lightning_logs/decoupled_distill_low_pass/epoch=59-step=104999-val_loss=16.0327.ckpt' #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=1-step=1461-val_loss=11.0918.ckpt'  #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=27-step=48999-val_loss=14.7525.ckpt' 
 
 
 # # 3. setup the interference
@@ -102,13 +102,13 @@ def traverse_images_and_texts(directory):
 
 
 # example
-directory_path =  '/home/apulis-dev/userdata/DGM/datasets/test_quality'   #'../DGM/datasets/test_sub_600'  # replace it to your own path 
+directory_path =  '/home/apulis-dev/userdata/DGM/datasets/test_quality'  # '../DGM/datasets/test_sub_200'    #'../DGM/datasets/test_sub_600'  # replace it to your own path 
 image_files, text_contents = traverse_images_and_texts(directory_path)  
 
 test_res_num = 1
 
 
-repath = "datasets/test_low_dkd_qua_0923"  #nfe5    #reconstruction_EXA" 
+repath = "datasets/test_low_dkd_qua_0924"  #nfe5    #reconstruction_EXA" 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  

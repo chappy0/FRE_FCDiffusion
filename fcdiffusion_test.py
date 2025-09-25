@@ -109,7 +109,7 @@ def load_model_from_config(config, ckpt, device=torch.device("cuda"), verbose=Fa
 
 
 # set model configuration file
-yaml_file_path = "configs/model_config.yaml"
+yaml_file_path = "configs/student_model_config.yaml"
 
 # set the checkpoint path in the lightning_logs dir (the loaded model should be consistent
 # with the "control_mode" parameter in the yaml config file)
@@ -118,7 +118,7 @@ yaml_file_path = "configs/model_config.yaml"
 # ckpt_file_path = "lightning_logs/fcdiffusion_mini_pass_checkpoint/epoch=10-step=34999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=7-step=17999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_mid_pass_checkpoint\epoch=11-step=241999.ckpt"
-ckpt_file_path = '/home/apulis-dev/userdata/DGM/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=3-step=75999.ckpt' #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=6-step=23999.ckpt'     
+ckpt_file_path = '/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=13-step=45999.ckpt' #'/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=6-step=23999.ckpt'     
 # ckpt_file_path = r"D:\paper\FRE_FCD\lightning_logs\mini\epoch=1-step=2999.ckpt"
 # ckpt_file_path = "lightning_logs_SA/fcdiffusion_mid_pass_checkpoint\epoch=0-step=1999.ckpt"
 # ckpt_file_path = r"D:\paper\FCDiffusion_code-main\lightning_logs\fcdiffusion_high_pass_checkpoint\epoch=3-step=12999.ckpt"
@@ -176,7 +176,7 @@ test_res_num = 1
 
 # 打印所有图片文件的路径  
 # print("Image files:") 
-repath = "test_gmea_output0922"    #reconstruction_EXA" 
+repath = "test_gmea_output0924"    #reconstruction_EXA" 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  
