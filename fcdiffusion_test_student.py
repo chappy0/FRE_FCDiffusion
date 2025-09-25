@@ -18,7 +18,7 @@ ckpt_file_path ='/path/to/your/trained/student/model'
 
 
 # # 3. setup the interference
-# TEST_IMAGE_PATH = 'datasets/test_sub_200'  # replace the path to your source images
+
 
 
 def load_student_model_from_distill_ckpt(config, ckpt_path, device=torch.device("cuda"), verbose=True):
@@ -102,13 +102,13 @@ def traverse_images_and_texts(directory):
 
 
 # example
-directory_path ='datasets/test_quality'  # replace it to your own path 
+directory_path ='/path/to/your/input/path'  # replace it to your own path 
 image_files, text_contents = traverse_images_and_texts(directory_path)  
 
 test_res_num = 1
 
 
-repath = "datasets/test_low_dkd_perf"  #nfe5    #reconstruction_EXA" 
+repath = "/path/to/your/output/path"  #nfe5    " 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  
