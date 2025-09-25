@@ -83,7 +83,7 @@ image_files, text_contents = traverse_images_and_texts(directory_path)
 test_res_num = 1
 
 
-repath = r"D:\paper\FCDiffusion_code-main\datasets\test_distangle"    #reconstruction_EXA" 
+repath = "/path/to/your/output/path"    #reconstruction_EXA" 
 if not os.path.exists(repath):
     os.makedirs(repath)
 for image_file,text_content in zip(image_files,text_contents):  
