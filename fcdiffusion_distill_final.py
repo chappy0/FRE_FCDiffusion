@@ -1,5 +1,4 @@
 
-
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
@@ -12,14 +11,11 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-
 from fcdiffusion.fcdiffusion import FCDiffusion, FreqControlNet, ControlledUnetModel
 from fcdiffusion.dataset import TrainDataset  
 from fcdiffusion.logger import DistillationImageLogger
 from ldm.util import instantiate_from_config
 from fcdiffusion.model import load_state_dict
-
-
 
 def get_activation(mem, name):
     def get_output_hook(module, input, output):
@@ -48,9 +44,11 @@ class DecoupledDistiller(pl.LightningModule):
         lambda_sd_stage1: float,     
         lambda_kd_unet_stage1: float,
         lambda_kd_control_stage1: float,
+        lambda_kd_fcnet_stage1: float,
         lambda_sd_stage2: float,     
         lambda_kd_unet_stage2: float,
         lambda_kd_control_stage2: float,
+        lambda_kd_fcnet_stage2: float,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -97,16 +95,28 @@ class DecoupledDistiller(pl.LightningModule):
 
     def _setup_distillation_hooks(self):
         self.acts_tea_unet, self.acts_stu_unet = {}, {}
+        self.acts_tea_fcnet, self.acts_stu_fcnet = {}, {}
         self.unet_block_layers = (
             [f'model.diffusion_model.input_blocks.{i}' for i in range(12)] +
             ['model.diffusion_model.middle_block'] +
             [f'model.diffusion_model.output_blocks.{i}' for i in range(12)]
         )
+        # self.fcnet_block_layers = (
+        #     [f'model.control_model.input_blocks.{i}' for i in range(12)] +
+        #     ['model.control_model.middle_block'] +
+        #     [f'model.control_model.output_blocks.{i}' for i in range(12)]
+        # )
+        self.fcnet_block_layers = (
+            [f'control_model.input_blocks.{i}' for i in range(12)] +
+            ['control_model.middle_block'] +
+            [f'control_model.output_blocks.{i}' for i in range(12)]
+        )
         add_hook(self.teacher_model, self.acts_tea_unet, self.unet_block_layers)
+        add_hook(self.teacher_model, self.acts_tea_fcnet, self.fcnet_block_layers)
         add_hook(self.student_model, self.acts_stu_unet, self.unet_block_layers)
+        add_hook(self.student_model, self.acts_stu_fcnet, self.fcnet_block_layers)
 
-    def _calculate_losses(self, batch, lambda_sd, lambda_kd_unet, lambda_kd_control):
-        # --- CRITICAL CHANGE: Lambdas are now passed as arguments ---
+    def _calculate_losses(self, batch, lambda_sd, lambda_kd_unet, lambda_kd_control, lambda_kd_fcnet):
         with torch.no_grad():
             z0, c_dict = self.teacher_model.get_input(batch, self.teacher_model.first_stage_key)
             hint = torch.cat(c_dict['c_concat'], 1)
@@ -117,11 +127,9 @@ class DecoupledDistiller(pl.LightningModule):
 
         with torch.no_grad():
             control_teacher = self.teacher_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
-            # Hooks are triggered here for teacher
             self.teacher_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_teacher))
         
         control_student = self.student_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
-        # Hooks are triggered here for student
         eps_student = self.student_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_student))
 
         loss_sd = F.mse_loss(eps_student.float(), noise.float())
@@ -144,38 +152,47 @@ class DecoupledDistiller(pl.LightningModule):
         
         loss_kd_unet = torch.stack(losses_kd_unet).mean() if losses_kd_unet else torch.tensor(0.0, device=self.device)
 
+        losses_kd_fcnet = []
+        for key in self.fcnet_block_layers:
+            a_tea = self.acts_tea_fcnet.get(key)
+            a_stu = self.acts_stu_fcnet.get(key)
+            if a_tea is not None and a_stu is not None:
+                if isinstance(a_tea, tuple): a_tea = a_tea[0]
+                if isinstance(a_stu, tuple): a_stu = a_stu[0]
+                losses_kd_fcnet.append(F.mse_loss(a_stu.float(), a_tea.float()))
+        
+        loss_kd_fcnet = torch.stack(losses_kd_fcnet).mean() if losses_kd_fcnet else torch.tensor(0.0, device=self.device)
+
         total_loss = (lambda_sd * loss_sd +
                       lambda_kd_unet * loss_kd_unet +
-                      lambda_kd_control * loss_kd_control)
+                      lambda_kd_control * loss_kd_control +
+                      lambda_kd_fcnet * loss_kd_fcnet)
         
-        return total_loss, loss_sd, loss_kd_unet, loss_kd_control
+        return total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet
         
-        return total_loss, loss_sd, loss_kd_unet, loss_kd_control, batch
-
     def training_step(self, batch, batch_idx):
         # Determine current lambdas based on training stage
         if self.global_step < self.hparams.stage_switch_step:
-            lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1)
+            lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1, self.hparams.lambda_kd_fcnet_stage1)
         else:
-            lambdas = (self.hparams.lambda_sd_stage2, self.hparams.lambda_kd_unet_stage2, self.hparams.lambda_kd_control_stage2)
+            lambdas = (self.hparams.lambda_sd_stage2, self.hparams.lambda_kd_unet_stage2, self.hparams.lambda_kd_control_stage2, self.hparams.lambda_kd_fcnet_stage2)
         
-        # Pass lambdas to the calculation function
-        total_loss, loss_sd, loss_kd_unet, loss_kd_control = self._calculate_losses(batch, *lambdas)
+        total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet = self._calculate_losses(batch, *lambdas)
 
         self.log_dict({
             "train_loss": total_loss,
             "loss_sd": loss_sd.detach(),
             "loss_kd_unet": loss_kd_unet.detach(),
             "loss_kd_control": loss_kd_control.detach(),
-            "current_lambda_sd": lambdas[0]
+            "loss_kd_fcnet": loss_kd_fcnet.detach(),
         }, prog_bar=True, on_step=True, logger=True)
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         # Use stage 1 weights for validation ---
-        lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1)
+        lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1, self.hparams.lambda_kd_fcnet_stage1)
         
-        total_val_loss, _, _, _ = self._calculate_losses(batch, *lambdas)
+        total_val_loss, _, _, _, _ = self._calculate_losses(batch, *lambdas)
         
         self.log("val_loss", total_val_loss, prog_bar=True, on_epoch=True, sync_dist=True)
         return total_val_loss
@@ -201,9 +218,6 @@ class DecoupledDistiller(pl.LightningModule):
         model = model.to(device)
         return model
 
-# ----------------------------------------------------------------------------------
-# 3. dataset and main function
-# ----------------------------------------------------------------------------------
 class ValidationDataset(Dataset):
     def __init__(self, data_list):
         self.data = data_list
@@ -214,7 +228,6 @@ class ValidationDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         try:
-
             source = Image.open(item['image_path']).convert("RGB").resize((512, 512))
             source = np.array(source).astype(np.uint8)
         except Exception as e:
@@ -246,10 +259,10 @@ if __name__ == "__main__":
     student_config_path = 'configs/student_model_config.yaml'
     
     DISTILL_MODE = "low_pass"
-    TEACHER_CKPT_PATH = ""
-    STUDENT_BASE_CKPT_PATH = '/path/to/your pre student model'
+    TEACHER_CKPT_PATH = "/path/to/your/teacher/model"
+    STUDENT_BASE_CKPT_PATH = '/path/to/your/student/init/model'
 
-    # --- 2."Instantiate a new Decoupled Distiller."
+    # --- 2. Instantiate a new Decoupled Distiller.
     model = DecoupledDistiller(
         teacher_config_path=teacher_config_path,
         teacher_ckpt_path=TEACHER_CKPT_PATH,
@@ -263,22 +276,24 @@ if __name__ == "__main__":
         stage_switch_step=30000,           
         
         # Weights for the first phase: focus on imitation (balance the weighted losses initially).
-        lambda_sd_stage1=6,
-        lambda_kd_unet_stage1=0.8,
-        lambda_kd_control_stage1=7,
+
         
+        lambda_sd_stage1=5,
+        lambda_kd_unet_stage1=0.04,
+        lambda_kd_fcnet_stage1=0.03,
+        lambda_kd_control_stage1=0.63,
         # Weights for the second phase: focus on self-quality (significantly increase the weight of loss_sd).
-        lambda_sd_stage2=30,
-        lambda_kd_unet_stage2=0.1,         
-        lambda_kd_control_stage2=0.2,
+        lambda_sd_stage2=8,
+        lambda_kd_unet_stage2=0.04,         
+        lambda_kd_control_stage2=0.03,
+        lambda_kd_fcnet_stage2=0.63,
     )
-    
 
 
-    train_dataset = TrainDataset('/path/to/your dataset json', cache_size=100)
+    train_dataset = TrainDataset('/path/to/your/train/dataset', cache_size=100)
     train_dataloader = DataLoader(train_dataset, num_workers=4, batch_size=16, shuffle=True)
     
-    validation_folder_path = '/home/apulis-dev/userdata/FCDiffusion_code/datasets/test_sub_600'
+    validation_folder_path = '/path/to/your/validate/dataset'
     val_data_list = traverse_images_and_texts(validation_folder_path)
     val_dataloader = None
     if val_data_list:
@@ -286,7 +301,7 @@ if __name__ == "__main__":
         def collate_fn(batch):
             batch = list(filter(lambda x: x is not None, batch))
             return torch.utils.data.dataloader.default_collate(batch) if batch else None
-        val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=4, shuffle=False, collate_fn=collate_fn)
+        val_dataloader = DataLoader(val_dataset, num_workers=4, batch_size=16, shuffle=False, collate_fn=collate_fn)
 
 
     checkpoint_callback = ModelCheckpoint(
@@ -308,7 +323,7 @@ if __name__ == "__main__":
         log_every_n_steps=50,
         val_check_interval=1.0, 
         gradient_clip_val=1.0,
-        resume_from_checkpoint='/path/to/your checkpoint' #If resuming training from a breakpoint is needed, please specify the path.
+        # resume_from_checkpoint='' #If resuming training from a breakpoint is needed, please specify the path.
     )
     
     print(f"Starting Decoupled Distillation for mode: {DISTILL_MODE}...")
