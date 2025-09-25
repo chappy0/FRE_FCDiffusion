@@ -5,7 +5,7 @@ img_path_list = []
 txt_list = []
 text_img_pairs = []
 
-root_dir = r'D:\paper\FRE_FCD\datasets'
+root_dir = '/path/to/your/input/path'
 for file in os.listdir(root_dir):
     file = os.path.join(root_dir, file)
     if os.path.isdir(file):
