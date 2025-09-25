@@ -14,7 +14,7 @@ yaml_file_path = "configs/student_model_config.yaml"
 
 
 
-ckpt_file_path ='lightning_logs/decoupled_distill_low_pass/your_trained_student_checkpoint.ckpt' 
+ckpt_file_path ='/path/to/your/trained/student/model' 
 
 
 # # 3. setup the interference
@@ -40,7 +40,7 @@ def load_student_model_from_distill_ckpt(config, ckpt_path, device=torch.device(
     student_state_dict = OrderedDict()
     for k, v in full_state_dict.items():
         if k.startswith("student_model."):
-            # 去除 "student_model." 前缀
+            # remove "student_model." prefix
             new_key = k[len("student_model."):]
             student_state_dict[new_key] = v
     
