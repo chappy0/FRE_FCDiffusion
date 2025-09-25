@@ -204,12 +204,11 @@ class CrossAttention(nn.Module):
         return self.to_out(out)
     
     def save_feature_to_file(self, filename, feature):
-        # 保存特征到文件
         feature = feature.detach().cpu().numpy()
         with open(filename, 'w') as f:
-            for h in range(feature.shape[1]):  # 遍历每个头
+            for h in range(feature.shape[1]):  
                 f.write(f"Head {h + 1}:\n")
-                np.savetxt(f, feature[0, h], fmt='%.6f')  # 仅保存第一个批次
+                np.savetxt(f, feature[0, h], fmt='%.6f')  
                 f.write("\n")
 
 
@@ -557,1060 +556,6 @@ class MultiHeadExternalAttention(nn.Module):
         return x.permute(0, 2, 1)  # (B, N, C)
 
 
-# class DepthwiseSeparableConv(nn.Module):
-#     def __init__(self, nin, nout, kernel_size, padding=0, stride=1):
-#         super(DepthwiseSeparableConv, self).__init__()
-#         self.depthwise = nn.Conv2d(nin, nin, kernel_size=kernel_size, padding=padding, stride=stride, groups=nin)
-#         self.pointwise = nn.Conv2d(nin, nout, kernel_size=1)
-
-#     def forward(self, x):
-#         x = self.depthwise(x)
-#         x = self.pointwise(x)
-#         return x
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, num_heads=4, M=64, coef=1, use_cross_kv=False):
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(M * num_heads * coef)
-#         self.scale = M ** -0.5
-#         self.same_in_out_chs = True
-#         self.use_cross_kv = use_cross_kv
-
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         self.k = DepthwiseSeparableConv(in_channels, self.inter_channels, kernel_size=1, stride=1)
-#         self.v = DepthwiseSeparableConv(self.inter_channels, in_channels, kernel_size=1, stride=1)
-
-#         self._init_weights()
-
-#     def _init_weights(self):
-#         """Initialize weights of DepthwiseSeparableConv layers using He initialization."""
-#         nn.init.kaiming_normal_(self.k.depthwise.weight, nonlinearity='relu')
-#         nn.init.kaiming_normal_(self.k.pointwise.weight, nonlinearity='relu')
-#         nn.init.kaiming_normal_(self.v.depthwise.weight, nonlinearity='relu')
-#         nn.init.kaiming_normal_(self.v.pointwise.weight, nonlinearity='relu')
-
-#     def _act_dn(self, x):
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)
-#         x = F.softmax(x * self.scale, dim=-1)
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)
-#         return x.view(B, C, N)
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         B, N, C = x.shape
-#         x = self.norm(x)
-#         x = x.permute(0, 2, 1).contiguous()
-
-#         if not self.use_cross_kv:
-#             x = self.k(x.view(B, C, 1, N)).squeeze(2)
-#             x = self._act_dn(x)
-#             x = self.v(x.unsqueeze(2)).squeeze(2)
-#         else:
-#             assert cross_k is not None and cross_v is not None, "cross_k and cross_v must not be None when use_cross_kv"
-#             x = x.view(1, -1, 1, N)
-#             x = F.conv2d(x, cross_k, groups=B)
-#             x = self._act_dn(x.squeeze(2))
-#             x = F.conv2d(x.unsqueeze(2), cross_v, groups=B).squeeze(2)
-#             x = x.view(B, C, N)
-
-#         return x.permute(0, 2, 1)
-
-
-
-
-def bn2d(in_channels, bn_mom=0.1, lr_mult=1.0, **kwargs):
-    assert 'bias' not in kwargs, "bias must not be in kwargs"
-    return nn.BatchNorm2d(in_channels, momentum=bn_mom, **kwargs)
-
-# class MultiHeadExternalAttention(nn.Module):
-    """
-    The ExternalAttention implementation based on PyTorch.
-    Args:
-        in_channels (int, optional): The input channels.
-        inter_channels (int, optional): The channels of intermediate feature.
-        out_channels (int, optional): The output channels.
-        num_heads (int, optional): The num of heads in attention. Default: 8
-        use_cross_kv (bool, optional): Whether to use cross_kv. Default: False
-    """
-
-    # def __init__(self,
-    #              in_channels,
-    #              M=128,
-    #              num_heads=8,
-    #              use_cross_kv=False):
-    #     super(MultiHeadExternalAttention, self).__init__()
-    #     # assert out_channels % num_heads == 0, \
-    #     #     f"out_channels ({out_channels}) should be a multiple of num_heads ({num_heads})"
-    #     self.in_channels = in_channels
-    #     self.out_channels = self.in_channels
-    #     self.inter_channels = M *num_heads
-    #     self.num_heads = num_heads
-    #     self.use_cross_kv = use_cross_kv
-    #     self.norm = bn2d(in_channels)
-    #     self.same_in_out_chs = self.in_channels == self.out_channels
-
-    #     if use_cross_kv:
-    #         assert self.same_in_out_chs, "in_channels must equal out_channels when use_cross_kv is True"
-    #     else:
-    #         self.k = nn.Parameter(
-    #             torch.randn(self.inter_channels, self.in_channels, 1, 1) * 0.001)
-    #         self.v = nn.Parameter(
-    #             torch.randn(self.out_channels, self.inter_channels, 1, 1) * 0.001)
-
-    #     self.apply(self._init_weights)
-
-    # def _init_weights(self, m):
-    #     if isinstance(m, nn.Linear):
-    #         nn.init.trunc_normal_(m.weight, std=0.001)
-    #         if m.bias is not None:
-    #             nn.init.constant_(m.bias, 0.)
-    #     elif isinstance(m, nn.BatchNorm2d):
-    #         nn.init.constant_(m.weight, 1.)
-    #         nn.init.constant_(m.bias, 0.)
-    #     elif isinstance(m, nn.Conv2d):
-    #         nn.init.trunc_normal_(m.weight, std=0.001)
-    #         if m.bias is not None:
-    #             nn.init.constant_(m.bias, 0.)
-
-    # def _act_sn(self, x):
-    #     x = x.view(-1, self.inter_channels, x.size(-1)) * (self.inter_channels ** -0.5)
-    #     x = F.softmax(x, dim=1)
-    #     x = x.view(1, -1, x.size(-1))
-    #     return x
-
-    # def _act_dn(self, x):
-    #     """Softmax activation for the key projection."""
-    #     B, C, N = x.shape
-    #     x = x.view(B, self.num_heads, C // self.num_heads, N)  # Split into heads
-    #     x = F.softmax(x / self.temperature, dim=3)  # Apply temperature scaling
-    #     # x = x / (torch.sum(x, dim=3, keepdim=True) + 1e-6)   # Apply temperature scaling
-    #     x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)  # Normalize
-    #     return x.view(B, C, N)  # Merge heads
-
-    # def forward(self, x, cross_k=None, cross_v=None):
-    #     """
-    #     Forward pass of the multi-head external attention.
-
-    #     Args:
-    #         x (Tensor): Input tensor of shape (B, N, C).
-    #         cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-    #         cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-    #     Returns:
-    #         Tensor: Output tensor of shape (B, N, C).
-    #     """
-    #     identity = x  # Save input for residual connection
-    #     x = self.norm(x)  # Apply LayerNorm
-
-    #     if not self.use_cross_kv:
-    #         # Reshape x for conv2d
-    #         B, N, C = x.shape
-    #         x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-    #         # Apply key projection
-    #         k_out = F.conv2d(x, self.k_proj, bias=None)  # (B, Inter_C, 1, N)
-    #         k_out = self.dropout(self._act_dn(k_out.squeeze(2)))  # (B, Inter_C, N)
-
-    #         # Apply value projection
-    #         v_out = self.dropout(F.conv2d(k_out.unsqueeze(2), self.v_proj, bias=None)).squeeze(2)  # (B, C, N)
-
-    #     else:
-    #         # Ensure cross_k and cross_v are provided
-    #         assert cross_k is not None and cross_v is not None, \
-    #             "cross_k and cross_v must be provided when use_cross_kv=True"
-
-    #         # Reshape x for conv2d
-    #         B, N, C = x.shape
-    #         x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-    #         # Apply cross-key projection
-    #         cross_k_out = F.conv2d(x, self.cross_k_proj, bias=None)  # (B, Inter_C, 1, N)
-    #         cross_k_out = self.dropout(self._act_dn(cross_k_out.squeeze(2)))  # (B, Inter_C, N)
-
-    #         # Apply cross-value projection
-    #         cross_v_out = F.conv2d(cross_k_out.unsqueeze(2), self.cross_v_proj, bias=None).squeeze(2)  # (B, C, N)
-
-    #         v_out = cross_v_out  # Use the cross-attention output
-
-    #     # Residual connection
-    #     x = v_out.permute(0, 2, 1) + identity  # Return to (B, N, C) and add residual
-    #     return x
-
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from sparsemax import Sparsemax  # 导入 Sparsemax 库
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, coef=1, M=64, num_heads=8, use_cross_kv=False):
-#         """
-#         Multi-head external attention module.
-
-#         Args:
-#             in_channels (int): Number of input channels.
-#             coef (float): Coefficient to control the intermediate dimension.
-#             num_heads (int): Number of attention heads.
-#             use_cross_kv (bool): Whether to use cross-key and cross-value projections.
-#         """
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(M *num_heads* coef)
-#         self.coef = coef
-#         # self.k = int(256 // coef)
-
-#         self.use_cross_kv = use_cross_kv
-
-#         # BatchNorm for input normalization
-#         self.norm = nn.BatchNorm1d(in_channels)
-        
-
-#         # Key and value projection parameters
-#         self.k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001)
-#         self.v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.001)
-
-#         if self.use_cross_kv:
-#             # Cross-key and cross-value parameters
-#             self.cross_k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001)
-#             self.cross_v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.001)
-
-#         # Initialize weights
-#         self.apply(self._init_weights)
-
-#         # Initialize Sparsemax
-#         # self.sparsemax = Sparsemax(dim=3)  # Use Sparsemax for dimension 3 (the N dimension)
-
-#     def _init_weights(self, m):
-#         """Initialize the weights of the layers."""
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, (nn.SyncBatchNorm, nn.BatchNorm1d)):
-#             nn.init.constant_(m.weight, 1.0)
-#             nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.Conv2d):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-
-#     def _act_dn(self, x):
-#         """Sparsemax activation for the key projection."""
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)  # Split into heads
-        
-#         # Replace softmax with sparsemax
-#         # x = self.sparsemax(x)  # Using Sparsemax instead of Softmax
-#         attn = F.softmax(x, dim=3)
-#         # Normalize attention values if needed
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)
-#         return x.view(B, C, N)  # Merge heads
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass of the multi-head external attention.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-#             cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         # Normalize input
-#         x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)  # (B, N, C)
-
-#         if not self.use_cross_kv:
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply key projection
-#             k_out = F.conv2d(x, self.k_proj, bias=None)  # (B, Inter_C, 1, N)
-#             k_out = self._act_dn(k_out.squeeze(2))  # (B, Inter_C, N)
-
-#             # Apply value projection
-#             v_out = F.conv2d(k_out.unsqueeze(2), self.v_proj, bias=None).squeeze(2)  # (B, C, N)
-
-#         else:
-#             # Ensure cross_k and cross_v are provided
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply cross-key projection
-#             cross_k_out = F.conv2d(x, self.cross_k_proj, bias=None)  # (B, Inter_C, 1, N)
-#             cross_k_out = self._act_dn(cross_k_out.squeeze(2))  # (B, Inter_C, N)
-
-#             # Apply cross-value projection
-#             cross_v_out = F.conv2d(cross_k_out.unsqueeze(2), self.cross_v_proj, bias=None).squeeze(2)  # (B, C, N)
-
-#             v_out = cross_v_out  # Use the cross-attention output
-
-#         return v_out.permute(0, 2, 1)  # Return to (B, N, C)
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, dim, num_heads=8, attn_drop=0., proj_drop=0., coef=2):
-#         """
-#         Multi-Head External Attention Module with Linear layers and Group Normalization.
-
-#         Arguments:
-#         - dim (int): Input channel dimension.
-#         - num_heads (int): Number of attention heads.
-#         - attn_drop (float): Dropout rate for attention weights.
-#         - proj_drop (float): Dropout rate for output projection.
-#         - coef (int): Dimensionality expansion factor.
-#         """
-#         super().__init__()
-#         self.num_heads = num_heads
-#         assert dim % num_heads == 0, "dim must be divisible by num_heads"
-
-#         # Scale factor for dimensionality transformation
-#         self.coef = coef
-#         inner_dim = dim * self.coef  # Expanded dimension for QKV
-#         head_dim = inner_dim // self.num_heads  # Dimension per head
-#         self.k = 256 // self.coef  # Reduced dimension for attention mechanism
-
-#         self.temperature = head_dim ** 0.5  # Scaling for softmax stability
-
-#         # Dimension transformation layer (Linear)
-#         self.trans_dims = nn.Linear(dim, inner_dim)
-
-#         # Attention layers (Linear)
-#         self.linear_0 = nn.Linear(head_dim, self.k)
-#         self.linear_1 = nn.Linear(self.k, head_dim)
-
-#         # Dropouts
-#         self.attn_drop = nn.Dropout(attn_drop)
-#         self.proj = nn.Linear(inner_dim, dim)  # Reduce dimensions back to original
-#         self.proj_drop = nn.Dropout(proj_drop)
-
-#         # Additional normalization layer
-#         self.norm = nn.LayerNorm(dim)
-#         self.apply(self._init_weights)
-
-#     def _init_weights(self, m):
-#         """Initialize the weights of the layers."""
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.LayerNorm):
-#             nn.init.constant_(m.weight, 1.0)
-#             nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.Conv2d):
-#             nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-
-#     def forward(self, x):
-#         """
-#         Arguments:
-#         - x: Input tensor of shape [B, N, C], where N = H * W.
-        
-#         Returns:
-#         - Output tensor of shape [B, N, C].
-#         """
-#         B, N, C = x.shape
-
-#         # Step 1: Transform dimensions
-#         x = self.trans_dims(x)  # [B, N, C] -> [B, N, C * coef]
-
-#         # Step 2: Reshape for attention heads
-#         inner_dim = x.shape[-1]
-#         head_dim = inner_dim // self.num_heads
-#         x = x.contiguous().view(B, N, self.num_heads, head_dim).permute(0, 2, 1, 3)  # [B, N, C * coef] -> [B, num_heads, N, head_dim]
-
-#         # Step 3: Apply attention mechanism
-#         attn = self.linear_0(x)  # [B, num_heads, N, head_dim] -> [B, num_heads, N, k]
-
-#         # Normalize using GroupNorm
-#         group_norm = nn.GroupNorm(num_groups=self.num_heads, num_channels=N).to(x.device)
-#         attn = F.softmax(attn, dim=-2)  # Softmax over tokens
-#         attn_sum = attn.sum(dim=-1, keepdim=True) + 1e-6  # Sum over k with epsilon
-#         attn = attn / attn_sum  # Normalize along k-dimension
-#         attn = group_norm(attn.transpose(1, 2).reshape(B, N, -1)).reshape(B, self.num_heads, N, -1).transpose(1, 2)  # Apply GN
-#         attn = self.attn_drop(attn)
-
-#         x = self.linear_1(attn)  # [B, num_heads, N, k] -> [B, num_heads, N, head_dim]
-#         x = x.permute(0, 2, 1, 3).reshape(B, N, inner_dim)  # [B, num_heads, N, head_dim] -> [B, N, C * coef]
-
-#         # Step 4: Project back to original dimensions
-#         x = self.proj(x)  # [B, N, C * coef] -> [B, N, C]
-#         x = self.proj_drop(x)
-
-#         # Step 5: Normalize the output
-#         x = self.norm(x)
-#         return x
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, coef=1, num_heads=8, use_cross_kv=False):
-#         """
-#         Multi-head external attention module.
-
-#         Args:
-#             in_channels (int): Number of input channels.
-#             coef (float): Coefficient to control the intermediate dimension.
-#             num_heads (int): Number of attention heads.
-#             use_cross_kv (bool): Whether to use cross-key and cross-value projections.
-#         """
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-        
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(in_channels * coef)
-#         self.coef = coef
-#         self.k = int(280 // coef)
-
-#         # Learnable temperature for stability
-#         self.temperature = nn.Parameter(torch.tensor((self.in_channels // self.num_heads) ** 0.5))
-#         # self.scale = dim_head ** -0.5
-
-#         self.use_cross_kv = use_cross_kv
-
-#         # Layer Normalization for input normalization
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         # Key and value projection parameters
-#         self.k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.01)
-#         self.v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.01)
-
-#         if self.use_cross_kv:
-#             # Cross-key and cross-value parameters
-#             self.cross_k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.01)
-#             self.cross_v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.01)
-
-#         # Dropout for regularization
-#         self.dropout = nn.Dropout(p=0.)
-
-#         # Initialize weights
-#         self.apply(self._init_weights)
-
-#     def _init_weights(self, m):
-#         """Initialize the weights of the layers."""
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.01)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.LayerNorm):
-#             nn.init.constant_(m.weight, 1.0)
-#             nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.Conv2d):
-#             nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-
-#     def _act_dn(self, x):
-#         """Softmax activation for the key projection."""
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)  # Split into heads
-#         x = F.softmax(x / self.temperature, dim=3)  # Apply temperature scaling
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)  # Normalize
-#         return x.view(B, C, N)  # Merge heads
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass of the multi-head external attention.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-#             cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         identity = x  # Save input for residual connection
-#         x = self.norm(x)  # Apply LayerNorm
-
-#         if not self.use_cross_kv:
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply key projection
-#             k_out = F.conv2d(x, self.k_proj, bias=None)  # (B, Inter_C, 1, N)
-
-#             k_out = self.dropout(self._act_dn(k_out.squeeze(2)))  # (B, Inter_C, N)
-
-#             # Apply value projection
-#             v_out = self.dropout(F.conv2d(k_out.unsqueeze(2), self.v_proj, bias=None)).squeeze(2)  # (B, C, N)
-
-#         else:
-#             # Ensure cross_k and cross_v are provided
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply cross-key projection
-#             cross_k_out = F.conv2d(x, self.cross_k_proj, bias=None)  # (B, Inter_C, 1, N)
-#             cross_k_out = self.dropout(self._act_dn(cross_k_out.squeeze(2)))  # (B, Inter_C, N)
-
-#             # Apply cross-value projection
-#             cross_v_out = F.conv2d(cross_k_out.unsqueeze(2), self.cross_v_proj, bias=None).squeeze(2)  # (B, C, N)
-
-#             v_out = cross_v_out  # Use the cross-attention output
-
-#         # Residual connection
-#         x = v_out.permute(0, 2, 1) + identity  # Return to (B, N, C) and add residual
-#         return x
-
-#need to try
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., group_norm_num=8):
-#         super(MultiHeadExternalAttention, self).__init__()
-#         self.num_heads = num_heads
-#         assert dim % num_heads == 0 
-#         self.coef = 4
-#         self.trans_dims = nn.Linear(dim, dim * self.coef)        
-#         self.group_norm = nn.GroupNorm(group_norm_num, dim)  # 添加组归一化层
-#         self.num_heads = self.num_heads * self.coef
-#         self.k = 256 // self.coef
-#         self.linear_0 = nn.Linear(dim * self.coef // self.num_heads, self.k)
-#         self.linear_1 = nn.Linear(self.k, dim * self.coef // self.num_heads)
-
-#         self.attn_drop = nn.Dropout(attn_drop)        
-#         self.proj = nn.Linear(dim * self.coef, dim)
-#         self.proj_drop = nn.Dropout(proj_drop)
-
-#     def forward(self, x):
-#         B, N, C = x.shape
-
-#         x = self.trans_dims(x)  # B, N, C 
-#         x = self.group_norm(x)  # 应用组归一化
-#         x = x.view(B, N, self.num_heads, -1).permute(0, 2, 1, 3)
-        
-#         attn = self.linear_0(x)
-#         attn = attn.softmax(dim=-2)
-#         attn = attn / (1e-9 + attn.sum(dim=-1, keepdim=True))
-#         attn = self.attn_drop(attn)
-#         x = self.linear_1(attn).permute(0,2,1,3).reshape(B, N, -1)
-        
-#         x = self.proj(x)
-#         x = self.proj_drop(x)
-#         return x
-
-#effect unknown,not very good now
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, dim, num_heads=8, attn_drop=0., proj_drop=0., coef=2):
-#         """
-#         Multi-Head External Attention Module with Linear layers.
-
-#         Arguments:
-#         - dim (int): Input channel dimension.
-#         - num_heads (int): Number of attention heads.
-#         - attn_drop (float): Dropout rate for attention weights.
-#         - proj_drop (float): Dropout rate for output projection.
-#         - coef (int): Dimensionality expansion factor.
-#         """
-#         super().__init__()
-#         self.num_heads = num_heads
-#         assert dim % num_heads == 0, "dim must be divisible by num_heads"
-
-#         # Scale factor for dimensionality transformation
-#         self.coef = coef
-#         inner_dim = dim * self.coef  # Expanded dimension for QKV
-#         head_dim = inner_dim // self.num_heads  # Dimension per head
-#         self.k = 256 // self.coef  # Reduced dimension for attention mechanism
-
-#         self.temperature = head_dim ** 0.5  # Scaling for softmax stability
-
-#         # Dimension transformation layer (Linear)
-#         self.trans_dims = nn.Linear(dim, inner_dim)
-
-#         # Attention layers (Linear)
-#         self.linear_0 = nn.Linear(head_dim, self.k)
-#         self.linear_1 = nn.Linear(self.k, head_dim)
-
-#         # Dropouts
-#         self.attn_drop = nn.Dropout(attn_drop)
-#         self.proj = nn.Linear(inner_dim, dim)  # Reduce dimensions back to original
-#         self.proj_drop = nn.Dropout(proj_drop)
-
-#         # Additional normalization layer
-#         self.norm = nn.LayerNorm(dim)
-#         self.apply(self._init_weights)
-
-#     def _init_weights(self, m):
-#         """Initialize the weights of the layers."""
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.LayerNorm):
-#             nn.init.constant_(m.weight, 1.0)
-#             nn.init.constant_(m.bias, 0.0)
-#         elif isinstance(m, nn.Conv2d):
-#             nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.0)
-
-#     def forward(self, x):
-#         """
-#         Arguments:
-#         - x: Input tensor of shape [B, N, C], where N = H * W.
-        
-#         Returns:
-#         - Output tensor of shape [B, N, C].
-#         """
-#         B, N, C = x.shape
-
-#         # Step 1: Transform dimensions
-#         x = self.trans_dims(x)  # [B, N, C] -> [B, N, C * coef]
-
-#         # Step 2: Reshape for attention heads
-#         inner_dim = x.shape[-1]
-#         head_dim = inner_dim // self.num_heads
-#         x = x.contiguous().view(B, N, self.num_heads, head_dim).permute(0, 2, 1, 3)  # [B, N, C * coef] -> [B, num_heads, N, head_dim]
-
-#         # Step 3: Apply attention mechanism
-#         attn = self.linear_0(x)  # [B, num_heads, N, head_dim] -> [B, num_heads, N, k]
-#         attn = F.softmax(attn, dim=-2)  # Softmax over tokens
-#         attn = attn / (1e-6 + attn.sum(dim=-1, keepdim=True))  # Normalize row-wise
-#         attn = self.attn_drop(attn)
-
-#         x = self.linear_1(attn)  # [B, num_heads, N, k] -> [B, num_heads, N, head_dim]
-#         x = x.permute(0, 2, 1, 3).reshape(B, N, inner_dim)  # [B, num_heads, N, head_dim] -> [B, N, C * coef]
-
-#         # Step 4: Project back to original dimensions
-#         x = self.proj(x)  # [B, N, C * coef] -> [B, N, C]
-#         x = self.proj_drop(x)
-
-#         # Step 5: Normalize the output
-#         x = self.norm(x)
-#         return x
-
-
-# def bn2d(in_channels, bn_mom=0.1, lr_mult=1.0, **kwargs):
-#     """BatchNorm2d wrapper."""
-#     assert 'bias' not in kwargs, "bias must not be in kwargs"
-#     return nn.BatchNorm2d(in_channels, momentum=bn_mom, **kwargs)
-
-# class MultiHeadExternalAttention(nn.Module):
-#     """
-#     External Attention implementation in PyTorch.
-
-#     Args:
-#         in_channels (int): Number of input channels.
-#         out_channels (int): Number of output channels.
-#         inter_channels (int): Number of intermediate feature channels.
-#         num_heads (int): Number of attention heads. Default: 8.
-#         use_cross_kv (bool): Whether to use cross key-value projections. Default: False.
-#     """
-
-#     def __init__(self, in_channels, M=256, num_heads=8, use_cross_kv=False):
-#         super(MultiHeadExternalAttention, self).__init__()
-#         # assert out_channels % num_heads == 0, \
-#         #     f"out_channels ({out_channels}) should be a multiple of num_heads ({num_heads})"
-
-#         self.in_channels = in_channels
-#         self.out_channels = in_channels
-#         self.inter_channels = M * num_heads
-#         self.num_heads = num_heads
-#         self.use_cross_kv = use_cross_kv
-#         self.same_in_out_chs = self.in_channels == self.out_channels
-
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         if not use_cross_kv:
-#             self.k = nn.Parameter(
-#                 torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001
-#             )
-#             self.v = nn.Parameter(
-#                 torch.randn(self.out_channels, self.inter_channels, 1, 1) * 0.001
-#             )
-
-#         self._init_weights()
-
-#     def _init_weights(self):
-#         """Initialize weights for layers."""
-#         nn.init.trunc_normal_(self.k, std=0.001)
-#         nn.init.trunc_normal_(self.v, std=0.001)
-
-#     def _act_dn(self, x):
-#         """Softmax activation with normalization for self-attention."""
-#         B, C, _, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, -1)  # (B, num_heads, channels_per_head, N)
-#         x = F.softmax(x, dim=-1)
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)
-#         return x.view(B, C, 1, N)
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass of External Attention.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor.
-#             cross_v (Tensor, optional): Cross-value tensor.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         B, N, C = x.shape
-
-#         # Normalize input
-#         x = self.norm(x)
-
-#         # Reshape to (B, C, 1, N) for Conv2d
-#         x = x.permute(0, 2, 1).unsqueeze(2)  # (B, N, C) -> (B, C, 1, N)
-
-#         if not self.use_cross_kv:
-#             x = F.conv2d(x, self.k, stride=2 if not self.same_in_out_chs else 1, padding=0)  # Key projection
-#             x = self._act_dn(x)  # Activation
-#             x = F.conv2d(x, self.v, stride=1, padding=0)  # Value projection
-#         else:
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-#             x = F.conv2d(x, cross_k, groups=B, stride=1, padding=0)  # Cross-key
-#             x = F.softmax(x, dim=1)
-#             x = F.conv2d(x, cross_v, groups=B, stride=1, padding=0)  # Cross-value
-
-#         # Reshape back to (B, N, C)
-#         x = x.squeeze(2).permute(0, 2, 1)  # (B, C, 1, N) -> (B, N, C)
-#         return x
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, coef=1, num_heads=8, use_cross_kv=False):
-#         """
-#         Multi-head external attention module.
-
-#         Args:
-#             in_channels (int): Number of input channels.
-#             coef (float): Coefficient to control the intermediate dimension.
-#             num_heads (int): Number of attention heads.
-#             use_cross_kv (bool): Whether to use cross-key and cross-value projections.
-#         """
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-        
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(256 * coef * num_heads)
-#         self.use_cross_kv = use_cross_kv
-
-#         # Learnable temperature for stability
-#         self.temperature = nn.Parameter(torch.tensor((self.in_channels // self.num_heads) ** 0.5))
-
-#         # Key and Value projection layers (using Conv1d)
-#         self.k_proj = nn.Conv1d(in_channels, self.inter_channels, kernel_size=1, bias=False)
-#         self.v_proj = nn.Conv1d(self.inter_channels, in_channels, kernel_size=1, bias=False)
-
-#         if use_cross_kv:
-#             self.cross_k_proj = nn.Conv1d(in_channels, self.inter_channels, kernel_size=1, bias=False)
-#             self.cross_v_proj = nn.Conv1d(self.inter_channels, in_channels, kernel_size=1, bias=False)
-
-#         # BatchNorm for key projection normalization
-#         self.bn_k = bn2d(self.inter_channels)
-
-#         # Layer Normalization for input normalization
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         # Dropout for regularization
-#         self.dropout = nn.Dropout(p=0.)
-
-#         # Initialize weights
-#         self.apply(self._init_weights)
-
-#     def _init_weights(self, m):
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.)
-#         elif isinstance(m, nn.BatchNorm2d):
-#             nn.init.constant_(m.weight, 1.)
-#             nn.init.constant_(m.bias, 0.)
-#         elif isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.)
-
-#     def _act_dn(self, x):
-#         """Softmax activation for the key projection."""
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)  # Split into heads
-#         x = F.softmax(x / self.temperature, dim=3)  # Apply temperature scaling
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)  # Normalize
-#         return x.view(B, C, N)  # Merge heads
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass of the multi-head external attention.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-#             cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         identity = x  # Save input for residual connection
-#         x = self.norm(x)  # Apply LayerNorm
-
-#         # Transpose x for Conv1d
-#         B, N, C = x.shape
-#         x = x.permute(0, 2, 1)  # (B, N, C) -> (B, C, N)
-
-#         if not self.use_cross_kv:
-#             # Apply key projection
-#             k_out = self.k_proj(x)  # (B, Inter_C, N)
-#             k_out = self.bn_k(k_out.unsqueeze(-1)).squeeze(-1)  # Add BatchNorm
-#             k_out = self._act_dn(self.dropout(k_out))  # Apply activation
-
-#             # Apply value projection
-#             v_out = self.v_proj(k_out)  # (B, C, N)
-#         else:
-#             # Ensure cross_k and cross_v are provided
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-
-#             # Apply cross-key and cross-value projections
-#             cross_k_out = self.cross_k_proj(x)  # (B, Inter_C, N)
-#             cross_k_out = self._act_dn(self.dropout(cross_k_out))  # (B, Inter_C, N)
-
-#             cross_v_out = self.cross_v_proj(cross_k_out)  # (B, C, N)
-#             v_out = cross_v_out
-
-#         # Residual connection
-#         x = v_out.permute(0, 2, 1) + identity  # (B, C, N) -> (B, N, C)
-#         return x
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, coef=1, num_heads=8, use_cross_kv=False):
-#         """
-#         Multi-head external attention module.
-
-#         Args:
-#             in_channels (int): Number of input channels.
-#             coef (float): Coefficient to control the intermediate dimension.
-#             num_heads (int): Number of attention heads.
-#             use_cross_kv (bool): Whether to use cross-key and cross-value projections.
-#         """
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-        
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(256 * num_heads)
-#         self.coef = coef
-        
-
-#         # Learnable temperature for stability
-#         self.temperature = nn.Parameter(torch.tensor((self.in_channels // self.num_heads) ** 0.5))
-#         # self.scale = dim_head ** -0.5
-
-#         self.use_cross_kv = use_cross_kv
-
-#         # Layer Normalization for input normalization
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         # Key and value projection parameters
-#         self.k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001)
-#         self.v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.001)
-
-#         if self.use_cross_kv:
-#             # Cross-key and cross-value parameters
-#             self.cross_k_proj = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001)
-#             self.cross_v_proj = nn.Parameter(torch.randn(in_channels, self.inter_channels, 1, 1) * 0.001)
-
-#         # Dropout for regularization
-#         self.dropout = nn.Dropout(p=0.)
-
-#         # Initialize weights
-#         self.apply(self._init_weights)
-#         #         self.apply(self._init_weights)
-
-#     def _init_weights(self, m):
-#         if isinstance(m, nn.Linear):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.)
-#         elif isinstance(m, nn.BatchNorm2d):
-#             nn.init.constant_(m.weight, 1.)
-#             nn.init.constant_(m.bias, 0.)
-#         elif isinstance(m, nn.Conv2d):
-#             nn.init.trunc_normal_(m.weight, std=0.001)
-#             if m.bias is not None:
-#                 nn.init.constant_(m.bias, 0.)
-
-
-#     def _act_dn(self, x):
-#         """Softmax activation for the key projection."""
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)  # Split into heads
-#         x = F.softmax(x / self.temperature, dim=3)  # Apply temperature scaling
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)  # Normalize
-#         return x.view(B, C, N)  # Merge heads
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass of the multi-head external attention.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-#             cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         identity = x  # Save input for residual connection
-#         x = self.norm(x)  # Apply LayerNorm
-
-#         if not self.use_cross_kv:
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply key projection
-#             k_out = F.conv2d(x, self.k_proj, bias=None)  # (B, Inter_C, 1, N)
-
-#             k_out = self.dropout(self._act_dn(k_out.squeeze(2)))  # (B, Inter_C, N)
-
-#             # Apply value projection
-#             v_out = self.dropout(F.conv2d(k_out.unsqueeze(2), self.v_proj, bias=None)).squeeze(2)  # (B, C, N)
-
-#         else:
-#             # Ensure cross_k and cross_v are provided
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-
-#             # Reshape x for conv2d
-#             B, N, C = x.shape
-#             x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#             # Apply cross-key projection
-#             cross_k_out = F.conv2d(x, self.cross_k_proj, bias=None)  # (B, Inter_C, 1, N)
-#             cross_k_out = self.dropout(self._act_dn(cross_k_out.squeeze(2)))  # (B, Inter_C, N)
-
-#             # Apply cross-value projection
-#             cross_v_out = F.conv2d(cross_k_out.unsqueeze(2), self.cross_v_proj, bias=None).squeeze(2)  # (B, C, N)
-
-#             v_out = cross_v_out  # Use the cross-attention output
-
-#         # Residual connection
-#         x = v_out.permute(0, 2, 1) + identity  # Return to (B, N, C) and add residual
-#         return x
-
-
-# class MultiHeadExternalAttention(nn.Module):
-#     def __init__(self, in_channels, coef=1, num_heads=8, use_cross_kv=False):
-#         """
-#         Multi-head external attention module.
-
-#         Args:
-#             in_channels (int): Number of input channels.
-#             coef (float): Coefficient to control the intermediate dimension.
-#             num_heads (int): Number of attention heads.
-#             use_cross_kv (bool): Whether to use cross-key and cross-value projections.
-#         """
-#         super(MultiHeadExternalAttention, self).__init__()
-#         assert in_channels % num_heads == 0, \
-#             f"in_channels ({in_channels}) should be a multiple of num_heads ({num_heads})"
-        
-#         self.num_heads = num_heads
-#         self.in_channels = in_channels
-#         self.inter_channels = int(in_channels * coef)
-#         self.use_cross_kv = use_cross_kv
-
-#         # Layer Normalization
-#         self.norm = nn.LayerNorm(in_channels)
-
-#         # Key and value projection
-#         self.k_proj = nn.Conv2d(in_channels, self.inter_channels, kernel_size=1, bias=False)
-#         self.v_proj = nn.Conv2d(self.inter_channels, in_channels, kernel_size=1, bias=False)
-
-#         if use_cross_kv:
-#             self.cross_k_proj = nn.Conv2d(in_channels, self.inter_channels, kernel_size=1, bias=False)
-#             self.cross_v_proj = nn.Conv2d(self.inter_channels, in_channels, kernel_size=1, bias=False)
-
-#         # Dropout for regularization
-#         self.dropout = nn.Dropout(p=0.)
-
-#         # Initialize weights
-#         self._init_weights()
-
-#     def _init_weights(self):
-#         """Initialize weights."""
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv2d):
-#                 nn.init.kaiming_uniform_(m.weight, a=0, mode='fan_in', nonlinearity='relu')
-#             elif isinstance(m, nn.LayerNorm):
-#                 nn.init.constant_(m.weight, 1.0)
-#                 nn.init.constant_(m.bias, 0.0)
-
-#     def _log_softmax_act(self, x):
-#         """Log-Softmax activation for stability."""
-#         B, C, N = x.shape
-#         x = x.view(B, self.num_heads, C // self.num_heads, N)
-#         x = F.log_softmax(x, dim=-1)  # Use log-softmax instead of softmax
-#         x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)  # Normalize
-#         return x.view(B, C, N)
-
-#     def _normalize_inputs(self, x):
-#         """Normalize inputs to stabilize softmax."""
-#         x = x / (torch.norm(x, dim=-1, keepdim=True) + 1e-6)
-#         return x
-
-#     def forward(self, x, cross_k=None, cross_v=None):
-#         """
-#         Forward pass.
-
-#         Args:
-#             x (Tensor): Input tensor of shape (B, N, C).
-#             cross_k (Tensor, optional): Cross-key tensor for cross-attention.
-#             cross_v (Tensor, optional): Cross-value tensor for cross-attention.
-
-#         Returns:
-#             Tensor: Output tensor of shape (B, N, C).
-#         """
-#         identity = x
-#         x = self.norm(x)  # Apply LayerNorm
-
-#         B, N, C = x.shape
-#         x = x.permute(0, 2, 1).unsqueeze(2)  # (B, C, 1, N)
-
-#         if not self.use_cross_kv:
-#             # Compute keys and normalize
-#             k_out = self.k_proj(x)  # (B, Inter_C, 1, N)
-#             k_out = self._normalize_inputs(k_out.squeeze(2))  # Normalize inputs
-#             k_out = self.dropout(self._log_softmax_act(k_out))  # Log-softmax for stability
-
-#             # Compute values
-#             v_out = self.v_proj(k_out.unsqueeze(2)).squeeze(2)  # (B, C, N)
-#         else:
-#             # Cross-attention
-#             assert cross_k is not None and cross_v is not None, \
-#                 "cross_k and cross_v must be provided when use_cross_kv=True"
-#             cross_k_out = self.cross_k_proj(x)
-#             cross_k_out = self._normalize_inputs(cross_k_out.squeeze(2))
-#             cross_k_out = self.dropout(self._log_softmax_act(cross_k_out))
-
-#             v_out = self.cross_v_proj(cross_k_out.unsqueeze(2)).squeeze(2)
-
-#         x = v_out.permute(0, 2, 1) + identity  # Residual connection
-#         return x
 
 
 
@@ -1655,34 +600,23 @@ class ff_EA2(nn.Module):
     def __init__(self, in_channels, hidden_size, out_channels):
         super(ff_EA2, self).__init__()
         
-        # 第一层 MLP
         self.fc1 = nn.Linear(in_channels, hidden_size)
-        # 第二层 MLP
         self.fc2 = nn.Linear(hidden_size, out_channels)
-        
-        # 3x3 深度卷积层
         self.depthwise_conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, groups=in_channels)
 
     def forward(self, x):
-        # 假设输入 x 是一个批次的图像数据，形状为 [batch_size, in_channels, height, width]
-        
-        # 将图像数据展平为 [batch_size, in_channels]
+
         #print(f"init x shape:{x.shape}")  #b,n,c
         x = x.reshape(x.size(0), -1)
         #print(f"reshape x shape:{x.shape}")
-        # 第一层 MLP，加上 ReLU 激活函数
         x = F.relu(self.fc1(x))
-        
-        # 第二层 MLP
         x = self.fc2(x)
         
-        # 将输出展回图像数据的形状 [batch_size, out_channels, height, width]
-        # 这里假设 out_channels 能够被 height * width 整除
+
         out_channels = self.fc2.out_features
         batch_size, height, width = x.size(0), int(out_channels ** 0.5), out_channels // height
         x = x.view(batch_size, out_channels, height, width)
-        
-        # 应用 3x3 深度卷积层
+
         x = self.depthwise_conv(x)
         
         return x
@@ -1723,7 +657,7 @@ class BasicTransformerBlock(nn.Module):
         "softmax": CrossAttention,  # vanilla attention
         "softmax-xformers": MemoryEfficientCrossAttention
     }
-    def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
+    def __init__(self, dim, n_heads, d_head,time_embed_dim, use_dynamic_hybrid_attention=False, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
                  disable_self_attn=False,use_external_attention=False,use_RMT=False):
         super().__init__()
         attn_mode = "softmax-xformers" if XFORMERS_IS_AVAILBLE else "softmax"
@@ -1738,21 +672,18 @@ class BasicTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
 
         if not self.disable_self_attn:
-            if use_external_attention: 
+            if use_dynamic_hybrid_attention:
+                print("Using Dynamic Hybrid Attention")
+                self.attn1 = DynamicHybridAttention(query_dim=dim, n_heads=n_heads, d_head=d_head, time_embed_dim=time_embed_dim,dropout=dropout)
+
+            elif use_external_attention: 
                 # print(f"dim:{dim},heads:{n_head},d_head:{d_head}")
                 print("use_external_attention")
-                self.attn1 = MultiHeadExternalAttention(dim,8,64)
-            elif use_RMT:
-                self.attn1 = RMTBlock(dim,n_heads,d_head)
-                # self.attn1 = ExternalAttention(dim)
-                # self.fc1 = nn.Sequential(ConvBNReLU(dim, dim, 3, 1, 1, 1),nn.Dropout2d(p=0.1))
-                # self.fc2 = nn.Conv2d(dim, dim, 1)
-                # self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
+                self.attn1 = MultiHeadExternalAttention(dim,8,64)  # need to update
 
-                # self.attn1 = ExternalAttention(dim, context_dim, heads=8, dim_head=64, dropout=0.1)
             else:
                 self.attn1 = attn_cls(query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
-                # self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
+                
 
         else:
             self.attn1 = attn_cls(query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout,
@@ -1778,14 +709,19 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, context=None,t_embedding=None):
+        return checkpoint(self._forward, (x, context, t_embedding), self.parameters(), self.checkpoint)
 
-    def _forward(self, x, context=None):
+    def _forward(self, x, context=None, t_embedding=None):
+        # print("forward")
+        if isinstance(self.attn1, DynamicHybridAttention):
+        # Pass the t_embedding to the DHA module
+            # print('forward using DynamicHybridAttention')
+            x = self.attn1(self.norm1(x), t_embedding=t_embedding) + x
 
         ##print(f"BT xshape:{x.shape}")
-        if isinstance(self.attn1, MultiHeadExternalAttention):
-            ##print(f"before attn1 x shape:{x.shape}")
+        elif isinstance(self.attn1, MultiHeadExternalAttention):
+            # print(f"forward with EA")
             x = self.attn1(self.norm1(x)) + x
             # x = x.permute(2,1,0)
             # #print(f"after attn1 x shape:{x.shape}")
@@ -1803,7 +739,7 @@ class BasicTransformerBlock(nn.Module):
         else:
             x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None) + x
 
-        # 交叉注意力或外部注意力
+
         if isinstance(self.attn2, MultiHeadExternalAttention):
             attn2_output = self.attn2(self.norm2(x))
             ##########print(f"after attn2 x shape:{attn2_output.shape}")
@@ -1816,29 +752,73 @@ class BasicTransformerBlock(nn.Module):
             
         elif self.attn2 is not None and context is not None:
             attn2_output = self.attn2(self.norm2(x), context=context)
-            x = attn2_output + x  # 残差连接
+            x = attn2_output + x  
 
-            # 前馈网络
-            # x = self.ff(self.norm3(x).permute(2,1,0)) + x  # 残差连接
-            x = self.ff(self.norm3(x)) + x  # 残差连接
+            # x = self.ff(self.norm3(x).permute(2,1,0)) + x  
+            x = self.ff(self.norm3(x)) + x  
         else:
             attn2_output = self.attn2(self.norm2(x))
-            x = attn2_output + x  # 残差连接
-
-            # 前馈网络
-            x = self.ff(self.norm3(x)) + x  # 残差连接
-        
-
+            x = attn2_output + x 
+            x = self.ff(self.norm3(x)) + x  
 
         return x
 
 
+# Our DHA
+
+class DynamicHybridAttention(nn.Module):
+    """
+    Dynamically interpolates between Self-Attention (SA) and External Attention (EA)
+    based on the timestep embedding.
+    """
+    def __init__(self, query_dim, n_heads, d_head, time_embed_dim, dropout=0.):
+        super().__init__()
+        # 1. Instantiate the Self-Attention Module (using your existing CrossAttention)
+        self.sa_attn = CrossAttention(query_dim=query_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+
+        # 2. Instantiate the External Attention Module
+        self.ea_attn = MultiHeadExternalAttention(in_channels=query_dim, num_heads=n_heads, M=d_head)
+
+        # 3. Define the Gating Network
+
+        # time_embed_dim = 1280 # 
+        self.gating_network = nn.Sequential(
+            nn.Linear(time_embed_dim, 64),
+            nn.SiLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, t_embedding=None):
+        # print(f"t_embedding:{t_embedding}")
+        if t_embedding is None:
+            # Default to full Self-Attention if no timestep is provided
+            return self.sa_attn(x)
+
+        # Calculate the blend factor alpha from the timestep embedding
+        # x shape: (B, N, C), t_embedding shape: (B, T_emb_dim)
+        alpha = self.gating_network(t_embedding)  # Shape: (B, 1)
+
+        # Unsqueeze alpha to make it broadcastable with the attention output
+        # Shape becomes (B, 1, 1) to multiply with (B, N, C)
+        alpha = alpha.unsqueeze(-1)
+        # print(f"DHA alpha:{alpha}")
+        # print(f"DHA alpha:{alpha}", file=sys.stderr)
+
+        # Calculate both attention outputs
+        sa_out = self.sa_attn(x)
+        ea_out = self.ea_attn(x)
+
+        # Dynamically blend the outputs
+        output = alpha * sa_out + (1 - alpha) * ea_out
+        return output
 
 class SpatialTransformer(nn.Module):
-    def __init__(self, in_channels, n_heads, d_head,
+    def __init__(self, in_channels, n_heads, d_head,time_embed_dim,
                  depth=1, dropout=0., context_dim=None,
                  disable_self_attn=False, use_linear=False,
-                 use_checkpoint=True,  use_external_attention=False):
+                 use_checkpoint=True,  use_external_attention=False,
+                 use_dynamic_hybrid_attention=False):
         super().__init__()
         if exists(context_dim) and not isinstance(context_dim, list):
             context_dim = [context_dim]
@@ -1852,7 +832,8 @@ class SpatialTransformer(nn.Module):
 
         self.transformer_blocks = nn.ModuleList(
             [BasicTransformerBlock(inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim[d] if context_dim else None,
-                                   disable_self_attn=disable_self_attn, checkpoint=use_checkpoint,use_external_attention=use_external_attention)
+                                   disable_self_attn=disable_self_attn, checkpoint=use_checkpoint,use_external_attention=use_external_attention,
+                                   time_embed_dim=time_embed_dim,use_dynamic_hybrid_attention=use_dynamic_hybrid_attention)
              for d in range(depth)]
         )
         if not use_linear:
@@ -1861,7 +842,10 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(inner_dim, in_channels))
         self.use_linear = use_linear
 
-    def forward(self, x, context=None):
+
+
+
+    def forward(self, x, emb, context=None):
         if not isinstance(context, list):
             context = [context]  # b, n, context_dim
         b, c, h, w = x.shape
@@ -1872,8 +856,11 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b c h w -> b (h w) c').contiguous()
         if self.use_linear:
             x = self.proj_in(x)  # b, hw, inner_dim
+            
+        # Pass the 'emb' down to the transformer blocks as 't_embedding'
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i] if context is not None and i < len(context) else None)
+            x = block(x, context=context[i] if context is not None and i < len(context) else None, t_embedding=emb)
+
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
