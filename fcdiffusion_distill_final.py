@@ -21,6 +21,7 @@ from fcdiffusion.dataset import TrainDataset
 from fcdiffusion.logger import DistillationImageLogger
 from ldm.util import instantiate_from_config
 from fcdiffusion.model import load_state_dict
+from ldm.modules.attention import DynamicHybridAttention
 
 def get_activation(mem, name):
     def get_output_hook(module, input, output):
@@ -31,6 +32,11 @@ def add_hook(net, mem, mapping_layers):
     for n, m in net.named_modules():
         if n in mapping_layers:
             m.register_forward_hook(get_activation(mem, n))
+
+def get_attn_map_hook(mem, name):
+    def get_output_hook(module, input, output):
+        mem[name] = getattr(module, 'attn_map', None)
+    return get_output_hook
 
 # ----------------------------------------------------------------------------------
 # 2.DecoupledDistiller
@@ -98,30 +104,146 @@ class DecoupledDistiller(pl.LightningModule):
         print(f"Migration Complete: {migrated_weights} tensors migrated, {non_migrated_weights} tensors remain (mostly new GMEA layers).")
         print("--- End of Weight Migration ---\n")
 
+
+
     def _setup_distillation_hooks(self):
+        print("Setting up distillation hooks...")
         self.acts_tea_unet, self.acts_stu_unet = {}, {}
         self.acts_tea_fcnet, self.acts_stu_fcnet = {}, {}
+
+        # --- 导入需要的模块 ---
+        from ldm.modules.attention import CrossAttention, DynamicHybridAttention, MultiHeadExternalAttention
+
+        # --- 第一部分：Hook Block Outputs (逻辑不变) ---
         self.unet_block_layers = (
             [f'model.diffusion_model.input_blocks.{i}' for i in range(12)] +
             ['model.diffusion_model.middle_block'] +
             [f'model.diffusion_model.output_blocks.{i}' for i in range(12)]
         )
-        # self.fcnet_block_layers = (
-        #     [f'model.control_model.input_blocks.{i}' for i in range(12)] +
-        #     ['model.control_model.middle_block'] +
-        #     [f'model.control_model.output_blocks.{i}' for i in range(12)]
-        # )
+        # (fcnet_block_layers 的定义也保持不变)
         self.fcnet_block_layers = (
             [f'control_model.input_blocks.{i}' for i in range(12)] +
-            ['control_model.middle_block'] +
-            [f'control_model.output_blocks.{i}' for i in range(12)]
+            ['control_model.middle_block']
+            # 注意：control_model 通常没有 output_blocks，如果您的有，请取消注释
+            # + [f'control_model.output_blocks.{i}' for i in range(12)]
         )
         add_hook(self.teacher_model, self.acts_tea_unet, self.unet_block_layers)
         add_hook(self.teacher_model, self.acts_tea_fcnet, self.fcnet_block_layers)
         add_hook(self.student_model, self.acts_stu_unet, self.unet_block_layers)
         add_hook(self.student_model, self.acts_stu_fcnet, self.fcnet_block_layers)
 
+        # --- 第二部分：Hook Attention Maps (全新精确匹配逻辑) ---
+
+        # 遍历我们关心的每一个U-Net块
+        for key in self.unet_block_layers:
+            try:
+                # 1. 为 Teacher 模型的 SA map 添加 Hook
+                teacher_block = self.teacher_model.get_submodule(key)
+                for n, m in teacher_block.named_modules():
+                    if isinstance(m, CrossAttention):
+                        # 使用块的key来构建存储的key，确保与提取时一致
+                        hook_key = f'{key}_sa_attn'
+                        m.register_forward_hook(get_attn_map_hook(self.acts_tea_unet, hook_key))
+                        print(f"Hooked Teacher SA map for key: {hook_key}")
+
+                # 2. 为 Student 模型的 EA map 添加 Hook
+                student_block = self.student_model.get_submodule(key)
+                for n, m in student_block.named_modules():
+                    if isinstance(m, DynamicHybridAttention):
+                        # Hook DHA模块内部的 ea_attn
+                        hook_key = f'{key}_ea_attn'
+                        m.ea_attn.register_forward_hook(get_attn_map_hook(self.acts_stu_unet, hook_key))
+                        print(f"Hooked Student EA map for key: {hook_key}")
+
+            except AttributeError:
+                # 如果某个模型没有这个子模块，就跳过
+                print(f"Warning: Submodule for key '{key}' not found, skipping hook.")
+                continue
+    # def _setup_distillation_hooks(self):
+    #     self.acts_tea_unet, self.acts_stu_unet = {}, {}
+    #     self.acts_tea_fcnet, self.acts_stu_fcnet = {}, {}
+    #     self.unet_block_layers = (
+    #         [f'model.diffusion_model.input_blocks.{i}' for i in range(12)] +
+    #         ['model.diffusion_model.middle_block'] +
+    #         [f'model.diffusion_model.output_blocks.{i}' for i in range(12)]
+    #     )
+    #     # self.fcnet_block_layers = (
+    #     #     [f'model.control_model.input_blocks.{i}' for i in range(12)] +
+    #     #     ['model.control_model.middle_block'] +
+    #     #     [f'model.control_model.output_blocks.{i}' for i in range(12)]
+    #     # )
+    #     self.fcnet_block_layers = (
+    #         [f'control_model.input_blocks.{i}' for i in range(12)] +
+    #         ['control_model.middle_block'] +
+    #         [f'control_model.output_blocks.{i}' for i in range(12)]
+    #     )
+    #     add_hook(self.teacher_model, self.acts_tea_unet, self.unet_block_layers)
+    #     add_hook(self.teacher_model, self.acts_tea_fcnet, self.fcnet_block_layers)
+    #     add_hook(self.student_model, self.acts_stu_unet, self.unet_block_layers)
+    #     add_hook(self.student_model, self.acts_stu_fcnet, self.fcnet_block_layers)
+
+    # def _calculate_losses(self, batch, lambda_sd, lambda_kd_unet, lambda_kd_control, lambda_kd_fcnet):
+    #     with torch.no_grad():
+    #         z0, c_dict = self.teacher_model.get_input(batch, self.teacher_model.first_stage_key)
+    #         hint = torch.cat(c_dict['c_concat'], 1)
+    #         cond_txt = torch.cat(c_dict['c_crossattn'], 1)
+    #     t = torch.randint(0, self.teacher_model.num_timesteps, (z0.shape[0],), device=self.device).long()
+    #     noise = torch.randn_like(z0)
+    #     z_noisy = self.teacher_model.q_sample(x_start=z0, t=t, noise=noise)
+
+    #     with torch.no_grad():
+    #         control_teacher = self.teacher_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
+    #         self.teacher_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_teacher))
+        
+    #     control_student = self.student_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
+    #     eps_student = self.student_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_student))
+
+    #     loss_sd = F.mse_loss(eps_student.float(), noise.float())
+        
+    #     loss_kd_control = 0.0
+    #     if len(control_student) > 0:
+    #         for c_s, c_t in zip(control_student, control_teacher):
+    #             loss_kd_control += F.mse_loss(c_s[0].float(), c_t[0].float())
+    #             loss_kd_control += F.mse_loss(c_s[1].float(), c_t[1].float())
+    #         loss_kd_control /= len(control_student)
+
+    #     losses_kd_unet = []
+    #     for key in self.unet_block_layers:
+    #         a_tea = self.acts_tea_unet.get(key)
+    #         a_stu = self.acts_stu_unet.get(key)
+    #         if a_tea is not None and a_stu is not None:
+    #             if isinstance(a_tea, tuple): a_tea = a_tea[0]
+    #             if isinstance(a_stu, tuple): a_stu = a_stu[0]
+    #             losses_kd_unet.append(F.mse_loss(a_stu.float(), a_tea.float()))
+        
+    #     loss_kd_unet = torch.stack(losses_kd_unet).mean() if losses_kd_unet else torch.tensor(0.0, device=self.device)
+
+    #     losses_kd_fcnet = []
+    #     for key in self.fcnet_block_layers:
+    #         a_tea = self.acts_tea_fcnet.get(key)
+    #         a_stu = self.acts_stu_fcnet.get(key)
+    #         if a_tea is not None and a_stu is not None:
+    #             if isinstance(a_tea, tuple): a_tea = a_tea[0]
+    #             if isinstance(a_stu, tuple): a_stu = a_stu[0]
+    #             losses_kd_fcnet.append(F.mse_loss(a_stu.float(), a_tea.float()))
+        
+    #     loss_kd_fcnet = torch.stack(losses_kd_fcnet).mean() if losses_kd_fcnet else torch.tensor(0.0, device=self.device)
+
+    #     total_loss = (lambda_sd * loss_sd +
+    #                   lambda_kd_unet * loss_kd_unet +
+    #                   lambda_kd_control * loss_kd_control +
+    #                   lambda_kd_fcnet * loss_kd_fcnet)
+        
+    #     return total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet
+
     def _calculate_losses(self, batch, lambda_sd, lambda_kd_unet, lambda_kd_control, lambda_kd_fcnet):
+        """
+        返回总损失 + 子损失（全部标量）
+        新增 lambda_attn_kl 在代码里写死 = 0.1，不放到 yaml
+        """
+        lambda_attn_kl = 0.1   # 写死，不去 config
+
+        # ---------- 1. 数据准备（与你原来一致） ----------
         with torch.no_grad():
             z0, c_dict = self.teacher_model.get_input(batch, self.teacher_model.first_stage_key)
             hint = torch.cat(c_dict['c_concat'], 1)
@@ -130,15 +252,21 @@ class DecoupledDistiller(pl.LightningModule):
         noise = torch.randn_like(z0)
         z_noisy = self.teacher_model.q_sample(x_start=z0, t=t, noise=noise)
 
+        # ---------- 2. 教师前向 + 收集 attn map ----------
+        self.acts_tea_unet.clear(); self.acts_tea_fcnet.clear()
         with torch.no_grad():
             control_teacher = self.teacher_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
-            self.teacher_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_teacher))
-        
+            _ = self.teacher_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_teacher))
+
+        # ---------- 3. 学生前向 + 收集 attn & alpha ----------
+        self.acts_stu_unet.clear(); self.acts_stu_fcnet.clear()
         control_student = self.student_model.control_model(x=z_noisy, hint=hint, timesteps=t, context=cond_txt)
         eps_student = self.student_model.model.diffusion_model(x=z_noisy, timesteps=t, context=cond_txt, control=list(control_student))
 
+        # ---------- 4. SD 损失 ----------
         loss_sd = F.mse_loss(eps_student.float(), noise.float())
-        
+
+        # ---------- 5. Control 损失（与你原来一致） ----------
         loss_kd_control = 0.0
         if len(control_student) > 0:
             for c_s, c_t in zip(control_student, control_teacher):
@@ -146,17 +274,48 @@ class DecoupledDistiller(pl.LightningModule):
                 loss_kd_control += F.mse_loss(c_s[1].float(), c_t[1].float())
             loss_kd_control /= len(control_student)
 
+        # ---------- 6. UNet Feature KD  +  Alpha 广播 ----------
+        # loss_kd_unet = 0.0
+        # for key in self.unet_block_layers:
+        #     a_tea = self.acts_tea_unet.get(key)
+        #     a_stu = self.acts_stu_unet.get(key)
+        #     if a_tea is None or a_stu is None: continue
+        #     if isinstance(a_tea, tuple): a_tea = a_tea[0]
+        #     if isinstance(a_stu, tuple): a_stu = a_stu[0]
+        #     # 广播 alpha 到 (B, C, 1)
+        #     alpha = self._get_alpha_for_key(key)
+        #     # alpha = alpha.view(alpha.size(0), -1, 1)   # ✅ (B, C, 1) 自动广播
+        #     alpha = alpha.view(alpha.size(0), 1, 1, 1)
+        #     loss_kd_unet += (alpha * F.mse_loss(a_stu, a_tea, reduction='none')).mean()
+
+        # --- 建议的修改 ---
+
+        # ---------- 6. UNet Feature KD (简化版本) ----------
         losses_kd_unet = []
         for key in self.unet_block_layers:
             a_tea = self.acts_tea_unet.get(key)
             a_stu = self.acts_stu_unet.get(key)
-            if a_tea is not None and a_stu is not None:
-                if isinstance(a_tea, tuple): a_tea = a_tea[0]
-                if isinstance(a_stu, tuple): a_stu = a_stu[0]
-                losses_kd_unet.append(F.mse_loss(a_stu.float(), a_tea.float()))
-        
+            if a_tea is None or a_stu is None: continue
+            if isinstance(a_tea, tuple): a_tea = a_tea[0]
+            if isinstance(a_stu, tuple): a_stu = a_stu[0]
+            
+            # 不再需要 alpha 进行动态加权，直接计算 MSE
+            losses_kd_unet.append(F.mse_loss(a_stu.float(), a_tea.float()))
+
+        # 在循环外计算最终的 loss_kd_unet
         loss_kd_unet = torch.stack(losses_kd_unet).mean() if losses_kd_unet else torch.tensor(0.0, device=self.device)
 
+        # ---------- 7. Attention-Map KL（新增，零依赖） ----------
+        # --- AFTER ---
+        loss_attn_kl = torch.tensor(0.0, device=self.device)
+        for key in self.unet_block_layers:
+            sa_attn = self.acts_tea_unet.get(key+'_sa_attn')
+            ea_attn = self.acts_stu_unet.get(key+'_ea_attn')
+            # print(f"[DEBUG] sa_attn={sa_attn is not None}, ea_attn={ea_attn is not None}, key={key}")
+            if sa_attn is None or ea_attn is None: continue
+            loss_attn_kl += self._attn_kl_loss(sa_attn, ea_attn)
+
+        # ---------- 8. FCNet 损失（与你原来一致） ----------
         losses_kd_fcnet = []
         for key in self.fcnet_block_layers:
             a_tea = self.acts_tea_fcnet.get(key)
@@ -164,16 +323,105 @@ class DecoupledDistiller(pl.LightningModule):
             if a_tea is not None and a_stu is not None:
                 if isinstance(a_tea, tuple): a_tea = a_tea[0]
                 if isinstance(a_stu, tuple): a_stu = a_stu[0]
-                losses_kd_fcnet.append(F.mse_loss(a_stu.float(), a_tea.float()))
-        
+                losses_kd_fcnet.append(F.mse_loss(a_stu, a_tea))
         loss_kd_fcnet = torch.stack(losses_kd_fcnet).mean() if losses_kd_fcnet else torch.tensor(0.0, device=self.device)
 
+        # ---------- 9. 总损失 ----------
         total_loss = (lambda_sd * loss_sd +
                       lambda_kd_unet * loss_kd_unet +
                       lambda_kd_control * loss_kd_control +
-                      lambda_kd_fcnet * loss_kd_fcnet)
+                      lambda_kd_fcnet * loss_kd_fcnet +
+                      lambda_attn_kl * loss_attn_kl)
+
+        return total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet, loss_attn_kl
+
+
+
+    def _attn_kl_loss(self, sa_attn, ea_attn, T=4.0):
+        if sa_attn is None or ea_attn is None:
+            return torch.tensor(0.0, device=self.device)
+
+        # 检查 sa_attn 是否为 3D，如果是，则重塑为 4D
+        if sa_attn.dim() == 3:
+            B, H, _, _ = ea_attn.shape
+            sa_attn = sa_attn.view(B, H, sa_attn.shape[1], sa_attn.shape[2])
+
+        # --- 解决方案在这里 ---
+        # sa_attn 已经是预先缩放好的，我们只缩放 ea_attn
+        sa_attn_resized = sa_attn
+        ea_attn_resized = F.adaptive_avg_pool2d(ea_attn, (sa_attn_resized.shape[-2], sa_attn_resized.shape[-1]))
+        # --- 解决方案结束 ---
         
-        return total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet
+        log_p = F.log_softmax(ea_attn_resized / T, dim=-1)
+        q     = F.softmax(sa_attn_resized / T, dim=-1)
+        
+        return F.kl_div(log_p, q, reduction='batchmean') * (T * T)
+    # def _attn_kl_loss(self, sa_attn, ea_attn, T=4.0):
+    #     """
+    #     sa_attn: (B*H, N, N) from Teacher's CrossAttention
+    #     ea_attn: (B, H, M, N) from Student's MultiHeadExternalAttention
+    #     都缩放到 64×64 再做 KL
+    #     """
+    #     # 从 4D 的 ea_attn 获取 Batch 和 Heads 维度
+    #     B, H, M, N_ea = ea_attn.shape
+
+    #     # 检查 sa_attn 是否为 3D，如果是，则重塑为 4D
+    #     if sa_attn.dim() == 3:
+    #         sa_attn = sa_attn.view(B, H, sa_attn.shape[1], sa_attn.shape[2])
+        
+    #     _, _, N_sa, _ = sa_attn.shape
+        
+    #     # 降采样 sa_attn 到 64x64
+    #     if N_sa > 0:
+    #         sa_attn = F.avg_pool2d(sa_attn, kernel_size=N_sa//64, stride=N_sa//64) if N_sa >= 64 else sa_attn
+        
+    #     # --- 解决方案在这里：使用 adaptive_avg_pool2d 替代 interpolate ---
+    #     # 这个函数可以保证将最后两个维度强制缩放到 (64, 64)
+    #     ea_attn = F.adaptive_avg_pool2d(ea_attn, (64, 64))
+        
+    #     # 检查缩放后的维度是否一致
+    #     if sa_attn.shape[-1] != ea_attn.shape[-1]:
+    #         # 如果不一致，这是一个新的错误，打印出来帮助调试
+    #         print(f"FATAL: Post-resize shape mismatch! SA_shape: {sa_attn.shape}, EA_shape: {ea_attn.shape}")
+    #         # 返回一个零损失，避免训练崩溃
+    #         return torch.tensor(0.0, device=sa_attn.device)
+
+    #     log_p = F.log_softmax(ea_attn / T, dim=-1)
+    #     q     = F.softmax(sa_attn / T, dim=-1)
+        
+    #     return F.kl_div(log_p, q, reduction='batchmean') * (T * T)
+
+
+    # def _get_alpha_for_key(self, key):
+    #     """
+    #     根据 key 字符串找到对应 DHA 模块，返回其 alpha_cache
+    #     key 示例：'model.diffusion_model.input_blocks.1.transformer_blocks.0.attn1'
+    #     """
+    #     for name, module in self.student_model.named_modules():
+    #         if key in name and isinstance(module, DynamicHybridAttention):
+    #             return module.alpha_cache   # (B,1,1)
+
+    #     return torch.tensor(1.0, device=self.device).view(1, 1, 1)
+    def _get_alpha_for_key(self, key):
+        """
+        根据 key 字符串找到对应 DHA 模块，返回其 alpha_cache
+        key 示例：'model.diffusion_model.input_blocks.1.transformer_blocks.0.attn1'
+        """
+        # 遍历学生模型的所有模块
+        for name, module in self.student_model.named_modules():
+            # 这里需要用你的新DHA类名
+            if key in name and isinstance(module, OptimizedDynamicHybridAttention): 
+                # --- 修改开始 ---
+                # 尝试获取新的 global_alpha_cache 属性
+                # 使用 getattr 提供一个默认值，以防万一
+                alpha = getattr(module, 'global_alpha_cache', None)
+                if alpha is not None:
+                    # 返回一个可以广播的形状
+                    return alpha.view(1, 1, 1) 
+                # --- 修改结束 ---
+
+        # 如果没找到，返回一个不影响梯度的默认值 1.0
+        return torch.tensor(1.0, device=self.device).view(1, 1, 1)
         
     def training_step(self, batch, batch_idx):
         # Determine current lambdas based on training stage
@@ -181,8 +429,9 @@ class DecoupledDistiller(pl.LightningModule):
             lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1, self.hparams.lambda_kd_fcnet_stage1)
         else:
             lambdas = (self.hparams.lambda_sd_stage2, self.hparams.lambda_kd_unet_stage2, self.hparams.lambda_kd_control_stage2, self.hparams.lambda_kd_fcnet_stage2)
-        
-        total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet = self._calculate_losses(batch, *lambdas)
+
+
+        total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet, loss_attn_kl = self._calculate_losses(batch, *lambdas)
 
         self.log_dict({
             "train_loss": total_loss,
@@ -190,23 +439,58 @@ class DecoupledDistiller(pl.LightningModule):
             "loss_kd_unet": loss_kd_unet.detach(),
             "loss_kd_control": loss_kd_control.detach(),
             "loss_kd_fcnet": loss_kd_fcnet.detach(),
-        }, prog_bar=True, on_step=True, logger=True)
+            "loss_attn_kl": loss_attn_kl.detach(), # <-- Add this line
+        }, prog_bar=True, on_step=True, logger=True)       
+        # total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet = self._calculate_losses(batch, *lambdas)
+
+        # self.log_dict({
+        #     "train_loss": total_loss,
+        #     "loss_sd": loss_sd.detach(),
+        #     "loss_kd_unet": loss_kd_unet.detach(),
+        #     "loss_kd_control": loss_kd_control.detach(),
+        #     "loss_kd_fcnet": loss_kd_fcnet.detach(),
+        # }, prog_bar=True, on_step=True, logger=True)
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         # Use stage 1 weights for validation ---
         lambdas = (self.hparams.lambda_sd_stage1, self.hparams.lambda_kd_unet_stage1, self.hparams.lambda_kd_control_stage1, self.hparams.lambda_kd_fcnet_stage1)
         
-        total_val_loss, _, _, _, _ = self._calculate_losses(batch, *lambdas)
+        # total_val_loss, _, _, _, _ = self._calculate_losses(batch, *lambdas)
+        total_val_loss, _, _, _, _, _ = self._calculate_losses(batch, *lambdas)
         
         self.log("val_loss", total_val_loss, prog_bar=True, on_epoch=True, sync_dist=True)
         return total_val_loss
 
+    # def configure_optimizers(self):
+    #     params_to_optimize = list(self.student_model.control_model.parameters())
+    #     params_to_optimize += list(self.student_model.model.diffusion_model.output_blocks.parameters())
+    #     params_to_optimize += list(self.student_model.model.diffusion_model.out.parameters())
+    #     print(f"Total number of trainable parameters: {sum(p.numel() for p in params_to_optimize)}")
+    #     optimizer = torch.optim.AdamW(params_to_optimize, lr=self.hparams.learning_rate)
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.trainer.max_steps)
+    #     return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
+
     def configure_optimizers(self):
-        params_to_optimize = list(self.student_model.control_model.parameters())
-        params_to_optimize += list(self.student_model.model.diffusion_model.output_blocks.parameters())
-        params_to_optimize += list(self.student_model.model.diffusion_model.out.parameters())
-        print(f"Total number of trainable parameters: {sum(p.numel() for p in params_to_optimize)}")
+        params_to_optimize = []
+
+        params_to_optimize.extend(list(self.student_model.control_model.parameters()))
+
+        params_to_optimize.extend(list(self.student_model.model.diffusion_model.output_blocks.parameters()))
+        params_to_optimize.extend(list(self.student_model.model.diffusion_model.out.parameters()))
+
+
+        for module in self.student_model.model.diffusion_model.input_blocks.modules():
+            if isinstance(module, DynamicHybridAttention): 
+                params_to_optimize.extend(list(module.parameters()))
+                
+        for module in self.student_model.model.diffusion_model.middle_block.modules():
+            if isinstance(module, DynamicHybridAttention): 
+                params_to_optimize.extend(list(module.parameters()))
+
+        total_params = sum(p.numel() for p in params_to_optimize)
+        print(f"Total number of trainable parameters: {total_params}")
+
         optimizer = torch.optim.AdamW(params_to_optimize, lr=self.hparams.learning_rate)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.trainer.max_steps)
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
@@ -268,7 +552,7 @@ if __name__ == "__main__":
     
     DISTILL_MODE = "low_pass"
     TEACHER_CKPT_PATH = "/home/apulis-dev/userdata/DGM/lightning_logs_SA/fcdiffusion_low_pass_checkpoint/epoch=3-step=75999.ckpt"
-    STUDENT_BASE_CKPT_PATH = './models/FCDiffusion_ini_dha2.ckpt'
+    STUDENT_BASE_CKPT_PATH = './models/FCDiffusion_ini_dha3.ckpt'
 
     # --- 2. Instantiate a new Decoupled Distiller.
     model = DecoupledDistiller(
@@ -334,7 +618,8 @@ if __name__ == "__main__":
         log_every_n_steps=50,
         val_check_interval=1.0, 
         gradient_clip_val=1.0,
-        # resume_from_checkpoint='' #If resuming training from a breakpoint is needed, please specify the path.
+
+        #resume_from_checkpoint='/home/apulis-dev/userdata/FRE_FCDiffusion/lightning_logs/decoupled_distill_low_pass/epoch=35-step=62999-val_loss=1.1796.ckpt' #If resuming training from a breakpoint is needed, please specify the path.
     )
     
     print(f"Starting Decoupled Distillation for mode: {DISTILL_MODE}...")

@@ -64,7 +64,8 @@ def load_images_and_texts(image_folder_path, text_folder_path, preprocess):
         base, ext = os.path.splitext(filename)
         if ext.lower() in [".jpg", ".jpeg", ".png", ".bmp"]:  # 图像文件后缀
             image_path = os.path.join(image_folder_path, filename)
-            text_base = base.split("_",1)[-1]
+            text_base = base.split("e_",1)[-1]
+            # text_base = base.replace("_output",'')
             text_filename = f"{text_base}.txt"
             text_path = os.path.join(text_folder_path, text_filename)
             if os.path.exists(text_path):  # 检查对应文本文件是否存在
@@ -87,8 +88,10 @@ def load_images_and_texts(image_folder_path, text_folder_path, preprocess):
     return image_text_pairs
 
 # 3. 加载文件夹数据
-folder_path = "/home/apulis-dev/userdata/FCDiffusion_code/datasets/test_ds_mid_f_0303/"  # 替换为你的文件夹路径
-text_folder_path = "/home/apulis-dev/userdata/FCDiffusion_code_EA/datasets/test_data/test_FID"
+# folder_path = "/home/apulis-dev/userdata/FCDiffusion_code/dynamic_outputs_low_pass_mode_0708"  # 替换为你的文件夹路径
+folder_path =   'test_dha_perf_output0926'  #'datasets/test_baseline/'
+#dynamic_outputs_task_conditioned_mid_simple/Image_scene_translation
+text_folder_path = "/home/apulis-dev/userdata/DGM/datasets/test_sub_200"
 image_text_pairs = load_images_and_texts(folder_path, text_folder_path,preprocess)
 
 if not image_text_pairs:
@@ -127,7 +130,7 @@ average_similarity = sum(cosine_similarities) / len(cosine_similarities)
 
 # print(f"\nAverage Cosine Similarity: {average_similarity:.4f}")
 # 打开文件用于写入，如果文件不存在则创建
-with open('cosine_similarities_mid_dis.txt', 'w') as file:
+with open('cosine_similarities_low_baseline_nfe4.txt', 'w') as file:
     # 写入标题
     file.write("Pairwise Cosine Similarities:\n")
     
@@ -137,3 +140,4 @@ with open('cosine_similarities_mid_dis.txt', 'w') as file:
     
     # 写入平均相似度
     file.write(f"\nAverage Cosine Similarity: {average_similarity:.4f}\n")
+    print(f"\nAverage Cosine Similarity: {average_similarity:.4f}\n")

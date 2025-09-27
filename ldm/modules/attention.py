@@ -163,45 +163,96 @@ class CrossAttention(nn.Module):
             nn.Linear(inner_dim, query_dim),
             nn.Dropout(dropout)
         )
+        self.attn_map = None 
+
 
     def forward(self, x, context=None, mask=None):
         h = self.heads
-        # ##########print(f"x shape:{x.shape}")
         q = self.to_q(x)
-        # ##########print(f"q shape:{q.shape}")
         context = default(context, x)
         k = self.to_k(context)
         v = self.to_v(context)
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
-        # force cast to fp32 to avoid overflowing
+        # 计算完整的 sim 矩阵 (这是显存占用最高点)
         if _ATTN_PRECISION == "fp32":
             with torch.autocast(enabled=False, device_type='cuda'):
                 q, k = q.float(), k.float()
                 sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
         else:
             sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
-
-        # self.save_feature_to_file("sa_q.txt", q)
-        # self.save_feature_to_file("sa_k.txt", k)
-        # self.save_feature_to_file("sa_v.txt", v)
-        # self.save_feature_to_file("sa_attention_scores.txt", sim)  # 保存注意力得分
         
         del q, k
-    
+
         if exists(mask):
             mask = rearrange(mask, 'b ... -> b (...)')
             max_neg_value = -torch.finfo(sim.dtype).max
             mask = repeat(mask, 'b j -> (b h) () j', h=h)
             sim.masked_fill_(~mask, max_neg_value)
 
-        # attention, what we cannot get enough of
         sim = sim.softmax(dim=-1)
 
+        # --- 解决方案在这里 ---
+        # 1. 为 KL Loss 准备一个小的、降采样后的版本并缓存
+        if sim.shape[-1] >= 64:
+            # 使用 adaptive_avg_pool2d 确保无论输入尺寸，输出都是 (B*H, 64, 64)
+            sim_for_kl = F.adaptive_avg_pool2d(sim.unsqueeze(1), (64, 64)).squeeze(1)
+        else:
+            # 如果原始尺寸小于64，则不缩放
+            sim_for_kl = sim
+        self.attn_map = sim_for_kl
+
+        # 2. 使用完整的、未经缩放的 sim 计算主输出，保证精度
         out = einsum('b i j, b j d -> b i d', sim, v)
+
+        # 3. 立刻删除巨大的 sim 矩阵，释放显存
+        del sim
+        # --- 解决方案结束 ---
+
         out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
+    # def forward(self, x, context=None, mask=None):
+    #     h = self.heads
+    #     # ##########print(f"x shape:{x.shape}")
+    #     q = self.to_q(x)
+    #     # ##########print(f"q shape:{q.shape}")
+    #     context = default(context, x)
+    #     k = self.to_k(context)
+    #     v = self.to_v(context)
+
+    #     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+
+    #     # force cast to fp32 to avoid overflowing
+    #     if _ATTN_PRECISION == "fp32":
+    #         with torch.autocast(enabled=False, device_type='cuda'):
+    #             q, k = q.float(), k.float()
+    #             sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+    #     else:
+    #         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+
+    #     # self.save_feature_to_file("sa_q.txt", q)
+    #     # self.save_feature_to_file("sa_k.txt", k)
+    #     # self.save_feature_to_file("sa_v.txt", v)
+    #     # self.save_feature_to_file("sa_attention_scores.txt", sim)  # 保存注意力得分
+        
+    #     del q, k
+    
+    #     if exists(mask):
+    #         mask = rearrange(mask, 'b ... -> b (...)')
+    #         max_neg_value = -torch.finfo(sim.dtype).max
+    #         mask = repeat(mask, 'b j -> (b h) () j', h=h)
+    #         sim.masked_fill_(~mask, max_neg_value)
+
+    #     # attention, what we cannot get enough of
+    #     sim = sim.softmax(dim=-1)
+    #     self.attn_map = sim
+    #     # self.attn_map = F.avg_pool2d(sim, kernel_size=sim.shape[-1]//64, stride=sim.shape[-1]//64)  # (B,H,64,64)
+
+
+    #     out = einsum('b i j, b j d -> b i d', sim, v)
+    #     out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+    #     return self.to_out(out)
     
     def save_feature_to_file(self, filename, feature):
         # 保存特征到文件
@@ -503,6 +554,7 @@ class MultiHeadExternalAttention(nn.Module):
 
         self.k = nn.Parameter(torch.randn(self.inter_channels, in_channels, 1, 1) * 0.001)
         self.v = nn.Parameter(torch.randn(self.in_channels, self.inter_channels, 1, 1) * 0.001)
+        self.attn_map = None 
 
         self._init_weights()
 
@@ -511,22 +563,36 @@ class MultiHeadExternalAttention(nn.Module):
         nn.init.trunc_normal_(self.k, std=0.001)
         nn.init.trunc_normal_(self.v, std=0.001)
 
+    # def _act_sn(self, x):
+    #     B, C, N = x.shape
+    #     x = x.view(-1, self.inter_channels, N) * self.scale
+    #     x = F.softmax(x, dim=1)
+    #     return x.view(B, C, N)
     def _act_sn(self, x):
         B, C, N = x.shape
         x = x.view(-1, self.inter_channels, N) * self.scale
-        x = F.softmax(x, dim=1)
-        return x.view(B, C, N)
+        attn = F.softmax(x, dim=1)               # ✅ 先保存
+        self.attn_map = attn.view(B, C, N)       # ✅ 缓存：(B,H,M,N)
+        return attn.view(B, C, N)
 
     def _act_dn(self, x):
         B, C, N = x.shape
-        # Reshape into heads
-        x = x.view(B, self.num_heads, self.inter_channels // self.num_heads, N)  # (B, num_heads, head_dim, N)
-        # Apply softmax across the N dimension
-        x = F.softmax(x * self.scale, dim=-1)
-        # Normalize along the head dimension
-        x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)
-        # Merge heads back into inter_channels
+        x = x.view(B, self.num_heads, self.inter_channels // self.num_heads, N)
+        attn = F.softmax(x * self.scale, dim=-1)   # ✅ 先保存
+        self.attn_map = attn                       # ✅ 缓存：(B,H,M,N)
+        x = attn / (torch.sum(attn, dim=2, keepdim=True) + 1e-6)
         return x.view(B, self.inter_channels, N)
+    # def _act_dn(self, x):
+    #     B, C, N = x.shape
+    #     # Reshape into heads
+    #     x = x.view(B, self.num_heads, self.inter_channels // self.num_heads, N)  # (B, num_heads, head_dim, N)
+    #     # Apply softmax across the N dimension
+    #     x = F.softmax(x * self.scale, dim=-1)
+    #     # self.attn_map = attn 
+    #     # Normalize along the head dimension
+    #     x = x / (torch.sum(x, dim=2, keepdim=True) + 1e-6)
+    #     # Merge heads back into inter_channels
+    #     return x.view(B, self.inter_channels, N)
 
     def forward(self, x, cross_k=None, cross_v=None):
         """
@@ -1745,15 +1811,10 @@ class BasicTransformerBlock(nn.Module):
             elif use_external_attention: 
                 # print(f"dim:{dim},heads:{n_head},d_head:{d_head}")
                 print("use_external_attention")
-                self.attn1 = MultiHeadExternalAttention(dim,8,64)  # need to update
+                # self.attn1 = MultiHeadExternalAttention(dim,8,64)
+                # self.attn1 = MultiHeadExternalAttention(dim,n_heads,d_head)  # need to update
             elif use_RMT:
                 self.attn1 = RMTBlock(dim,n_heads,d_head)
-                # self.attn1 = ExternalAttention(dim)
-                # self.fc1 = nn.Sequential(ConvBNReLU(dim, dim, 3, 1, 1, 1),nn.Dropout2d(p=0.1))
-                # self.fc2 = nn.Conv2d(dim, dim, 1)
-                # self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
-
-                # self.attn1 = ExternalAttention(dim, context_dim, heads=8, dim_head=64, dropout=0.1)
             else:
                 self.attn1 = attn_cls(query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout)
                 # self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
@@ -1790,8 +1851,17 @@ class BasicTransformerBlock(nn.Module):
         if isinstance(self.attn1, DynamicHybridAttention):
         # Pass the t_embedding to the DHA module
             # print('forward using DynamicHybridAttention')
-            x = self.attn1(self.norm1(x), t_embedding=t_embedding) + x
+        # Get the output from the attention module
+            attn1_output = self.attn1(self.norm1(x), t_embedding=t_embedding)
 
+            # Check if the output is a tuple (training mode) or a single tensor (inference mode)
+            if isinstance(attn1_output, tuple):
+                # Unpack the tuple and use the first element for the residual connection
+                output, sa_map, ea_map = attn1_output
+                x = output + x
+            else:
+                # Handle the case where only the output tensor is returned
+                x = attn1_output + x
         ##print(f"BT xshape:{x.shape}")
         elif isinstance(self.attn1, MultiHeadExternalAttention):
             # print(f"forward with EA")
@@ -1812,7 +1882,7 @@ class BasicTransformerBlock(nn.Module):
         else:
             x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None) + x
 
-        # 交叉注意力或外部注意力
+
         if isinstance(self.attn2, MultiHeadExternalAttention):
             attn2_output = self.attn2(self.norm2(x))
             ##########print(f"after attn2 x shape:{attn2_output.shape}")
@@ -1825,71 +1895,179 @@ class BasicTransformerBlock(nn.Module):
             
         elif self.attn2 is not None and context is not None:
             attn2_output = self.attn2(self.norm2(x), context=context)
-            x = attn2_output + x  # 残差连接
+            x = attn2_output + x  
 
-            # 前馈网络
-            # x = self.ff(self.norm3(x).permute(2,1,0)) + x  # 残差连接
-            x = self.ff(self.norm3(x)) + x  # 残差连接
+
+            x = self.ff(self.norm3(x)) + x  
         else:
             attn2_output = self.attn2(self.norm2(x))
-            x = attn2_output + x  # 残差连接
+            x = attn2_output + x  
 
-            # 前馈网络
-            x = self.ff(self.norm3(x)) + x  # 残差连接
-        
-
-
+            x = self.ff(self.norm3(x)) + x  
         return x
 
 
-# Add this new class in attention.py
-
 class DynamicHybridAttention(nn.Module):
     """
-    Dynamically interpolates between Self-Attention (SA) and External Attention (EA)
-    based on the timestep embedding.
+    基于gather/scatter实现真正的稀疏计算，解决计算效率问题
+    融合逻辑：EA作为基础特征，SA对重要token进行增强
     """
-    def __init__(self, query_dim, n_heads, d_head, time_embed_dim, dropout=0.):
+    def __init__(self, query_dim, n_heads, d_head, time_embed_dim, 
+                 min_sa_tokens=16, dropout=0.):
         super().__init__()
-        # 1. Instantiate the Self-Attention Module (using your existing CrossAttention)
+        self.query_dim = query_dim
+        self.min_sa_tokens = min_sa_tokens  # 保证SA至少处理的token数量，避免极端情况
+        
+        # 注意力模块保持不变
         self.sa_attn = CrossAttention(query_dim=query_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
-
-        # 2. Instantiate the External Attention Module
         self.ea_attn = MultiHeadExternalAttention(in_channels=query_dim, num_heads=n_heads, M=d_head)
-
-        # 3. Define the Gating Network
-
-        # time_embed_dim = 1280 # 
+        
+        # 门控网络：输出局部重要性分数（用于筛选SA token）
         self.gating_network = nn.Sequential(
             nn.Linear(time_embed_dim, 64),
             nn.SiLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
+            nn.Linear(64, query_dim)  # 仅输出局部筛选分数
         )
+        
+        # 全局增强权重（用于调整SA增强的强度）
+        self.global_alpha = nn.Parameter(torch.tensor(0.5))  # 可学习的全局权重
 
     def forward(self, x, t_embedding=None):
-        # print(f"t_embedding:{t_embedding}")
+        batch_size, seq_len, _ = x.shape
+        
+        # 推理模式：使用完整SA保证质量（或根据需求切换为混合模式）
         if t_embedding is None:
-            # Default to full Self-Attention if no timestep is provided
             return self.sa_attn(x)
-
-        # Calculate the blend factor alpha from the timestep embedding
-        # x shape: (B, N, C), t_embedding shape: (B, T_emb_dim)
-        alpha = self.gating_network(t_embedding)  # Shape: (B, 1)
-
-        # Unsqueeze alpha to make it broadcastable with the attention output
-        # Shape becomes (B, 1, 1) to multiply with (B, N, C)
-        alpha = alpha.unsqueeze(-1)
-        # print(f"DHA alpha:{alpha}")
-        # print(f"DHA alpha:{alpha}", file=sys.stderr)
-
-        # Calculate both attention outputs
-        sa_out = self.sa_attn(x)
-        ea_out = self.ea_attn(x)
-
-        # Dynamically blend the outputs
-        output = alpha * sa_out + (1 - alpha) * ea_out
+        
+        # 1. 计算token重要性并筛选需要SA处理的token
+        local_scores = self.gating_network(t_embedding)  # (batch_size, query_dim)
+        token_importance = torch.einsum("bqd,bd->bq", x, local_scores)  # (batch_size, seq_len)
+        
+        # 动态确定筛选阈值：确保至少有min_sa_tokens个token被选中
+        k = max(self.min_sa_tokens, int(seq_len * 0.1))  # 至少保留10%或min_sa_tokens个token
+        _, top_indices = torch.topk(token_importance, k, dim=1)  # (batch_size, k)
+        
+        # 2. 仅对筛选出的重要token执行SA计算（核心优化）
+        # 2.1 Gather：提取重要token
+        # 为gather准备索引：(batch_size, k, 1) -> 扩展维度以匹配x
+        expanded_indices = top_indices.unsqueeze(-1).repeat(1, 1, self.query_dim)
+        x_important = torch.gather(x, dim=1, index=expanded_indices)  # (batch_size, k, query_dim)
+        
+        # 2.2 对精简序列执行SA计算（计算量从O(n²)降为O(k²)）
+        sa_important_out = self.sa_attn(x_important)  # (batch_size, k, query_dim)
+        
+        # 2.3 Scatter：将SA结果放回原始序列位置
+        sa_out = torch.zeros_like(x)  # 初始化SA输出
+        sa_out = sa_out.scatter(dim=1, index=expanded_indices, src=sa_important_out)
+        
+        # 3. EA处理全部序列作为基础特征
+        ea_out = self.ea_attn(x)  # (batch_size, seq_len, query_dim)
+        
+        # 4. 融合逻辑：EA基础特征 + SA增强特征（全局权重控制增强强度）
+        output = ea_out + self.global_alpha * sa_out
+        
+        # 缓存注意力图和筛选索引（用于可视化和分析）
+        self.sa_indices_cache = top_indices.detach()
+        self.global_alpha_cache = self.global_alpha.detach()
+        
+        # 训练时返回注意力图（保持原有接口）
+        sa_attn = getattr(self.sa_attn, 'attn_map', None)
+        ea_attn = getattr(self.ea_attn, 'attn_map', None)
+        if sa_attn is not None:
+            self.sa_attn.attn_map = None
+        if ea_attn is not None:
+            self.ea_attn.attn_map = None
+        
+        if self.training and sa_attn is not None and ea_attn is not None:
+            return output, sa_attn, ea_attn
         return output
+
+#origin
+
+# class DynamicHybridAttention(nn.Module):
+#     """
+#     Dynamically interpolates between Self-Attention (SA) and External Attention (EA)
+#     based on the timestep embedding.
+#     """
+#     def __init__(self, query_dim, n_heads, d_head, time_embed_dim, dropout=0.):
+#         super().__init__()
+#         # 1. Instantiate the Self-Attention Module (using your existing CrossAttention)
+#         self.sa_attn = CrossAttention(query_dim=query_dim, heads=n_heads, dim_head=d_head, dropout=dropout)
+
+#         # 2. Instantiate the External Attention Module
+#         self.ea_attn = MultiHeadExternalAttention(in_channels=query_dim, num_heads=n_heads, M=d_head)
+
+#         # 3. Define the Gating Network
+
+#         # time_embed_dim = 1280 # 
+#         self.gating_network = nn.Sequential(
+#             nn.Linear(time_embed_dim, 64),
+#             nn.SiLU(),
+#             nn.Linear(64, 1),
+#             nn.Sigmoid()
+#         )
+
+#     def forward(self, x, t_embedding=None):
+#         if t_embedding is None:
+#             out = self.sa_attn(x)
+#             self.alpha_cache = torch.tensor(1.0, device=x.device)
+#             return out                      # 推理只返回 out
+
+#         alpha = self.gating_network(t_embedding).unsqueeze(-1)
+#         self.alpha_cache = alpha.detach()
+
+#         # 1. 前向（接口不变）
+#         sa_out = self.sa_attn(x)            # 不传 return_attn
+#         ea_out = self.ea_attn(x)
+#         output = alpha * sa_out + (1 - alpha) * ea_out
+
+#         sa_attn = getattr(self.sa_attn, 'attn_map', None)
+#         ea_attn = getattr(self.ea_attn, 'attn_map', None)
+#         if sa_attn is not None:
+#             self.sa_attn.attn_map = None
+#         if ea_attn is not None:
+#             self.ea_attn.attn_map = None
+
+#         if self.training and sa_attn is not None and ea_attn is not None:
+#             return output, sa_attn, ea_attn
+#         return output
+
+
+        # sa_attn = self.sa_attn.attn_map     # (B,H,N,N)
+        # ea_attn = self.ea_attn.attn_map     # (B,H,M,N)
+
+        # output = alpha * sa_out + (1 - alpha) * ea_out
+
+        # if self.training:
+        #     return output, sa_attn, ea_attn   # 训练返回 3 个
+        # return output                         # 推理只返回 out
+
+    # def forward(self, x, t_embedding=None):
+    #     # print(f"t_embedding:{t_embedding}")
+    #     if t_embedding is None:
+    #         # Default to full Self-Attention if no timestep is provided
+    #         return self.sa_attn(x)
+
+    #     # Calculate the blend factor alpha from the timestep embedding
+    #     # x shape: (B, N, C), t_embedding shape: (B, T_emb_dim)
+    #     alpha = self.gating_network(t_embedding)  # Shape: (B, 1)
+
+    #     # Unsqueeze alpha to make it broadcastable with the attention output
+    #     # Shape becomes (B, 1, 1) to multiply with (B, N, C)
+    #     alpha = alpha.unsqueeze(-1)
+    #     # print(f"DHA alpha:{alpha}")
+    #     # print(f"DHA alpha:{alpha}", file=sys.stderr)
+
+    #     # Calculate both attention outputs
+    #     sa_out = self.sa_attn(x)
+    #     ea_out = self.ea_attn(x)
+
+    #     # Dynamically blend the outputs
+    #     output = alpha * sa_out + (1 - alpha) * ea_out
+    #     # return output
+    #     if self.training:
+    #         return output, sa_attn, ea_attn   # 后两项仅训练用
+    #     return output
 
 class SpatialTransformer(nn.Module):
     def __init__(self, in_channels, n_heads, d_head,time_embed_dim,
@@ -1920,25 +2098,6 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(inner_dim, in_channels))
         self.use_linear = use_linear
 
-    # def forward(self, x, context=None):
-    #     if not isinstance(context, list):
-    #         context = [context]  # b, n, context_dim
-    #     b, c, h, w = x.shape
-    #     x_in = x
-    #     x = self.norm(x)
-    #     if not self.use_linear:
-    #         x = self.proj_in(x)
-    #     x = rearrange(x, 'b c h w -> b (h w) c').contiguous()
-    #     if self.use_linear:
-    #         x = self.proj_in(x)  # b, hw, inner_dim
-    #     for i, block in enumerate(self.transformer_blocks):
-    #         x = block(x, context=context[i] if context is not None and i < len(context) else None)
-    #     if self.use_linear:
-    #         x = self.proj_out(x)
-    #     x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
-    #     if not self.use_linear:
-    #         x = self.proj_out(x)
-    #     return x + x_in
 
 
     def forward(self, x, emb, context=None):
