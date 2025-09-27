@@ -175,7 +175,7 @@ class CrossAttention(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
-        # 计算完整的 sim 矩阵 (这是显存占用最高点)
+
         if _ATTN_PRECISION == "fp32":
             with torch.autocast(enabled=False, device_type='cuda'):
                 q, k = q.float(), k.float()
@@ -193,75 +193,16 @@ class CrossAttention(nn.Module):
 
         sim = sim.softmax(dim=-1)
 
-        # --- 解决方案在这里 ---
-        # 1. 为 KL Loss 准备一个小的、降采样后的版本并缓存
         if sim.shape[-1] >= 64:
-            # 使用 adaptive_avg_pool2d 确保无论输入尺寸，输出都是 (B*H, 64, 64)
             sim_for_kl = F.adaptive_avg_pool2d(sim.unsqueeze(1), (64, 64)).squeeze(1)
         else:
-            # 如果原始尺寸小于64，则不缩放
             sim_for_kl = sim
         self.attn_map = sim_for_kl
-
-        # 2. 使用完整的、未经缩放的 sim 计算主输出，保证精度
         out = einsum('b i j, b j d -> b i d', sim, v)
-
-        # 3. 立刻删除巨大的 sim 矩阵，释放显存
         del sim
-        # --- 解决方案结束 ---
-
         out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
-    # def forward(self, x, context=None, mask=None):
-    #     h = self.heads
-    #     # ##########print(f"x shape:{x.shape}")
-    #     q = self.to_q(x)
-    #     # ##########print(f"q shape:{q.shape}")
-    #     context = default(context, x)
-    #     k = self.to_k(context)
-    #     v = self.to_v(context)
 
-    #     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
-
-    #     # force cast to fp32 to avoid overflowing
-    #     if _ATTN_PRECISION == "fp32":
-    #         with torch.autocast(enabled=False, device_type='cuda'):
-    #             q, k = q.float(), k.float()
-    #             sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
-    #     else:
-    #         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
-
-    #     # self.save_feature_to_file("sa_q.txt", q)
-    #     # self.save_feature_to_file("sa_k.txt", k)
-    #     # self.save_feature_to_file("sa_v.txt", v)
-    #     # self.save_feature_to_file("sa_attention_scores.txt", sim)  # 保存注意力得分
-        
-    #     del q, k
-    
-    #     if exists(mask):
-    #         mask = rearrange(mask, 'b ... -> b (...)')
-    #         max_neg_value = -torch.finfo(sim.dtype).max
-    #         mask = repeat(mask, 'b j -> (b h) () j', h=h)
-    #         sim.masked_fill_(~mask, max_neg_value)
-
-    #     # attention, what we cannot get enough of
-    #     sim = sim.softmax(dim=-1)
-    #     self.attn_map = sim
-    #     # self.attn_map = F.avg_pool2d(sim, kernel_size=sim.shape[-1]//64, stride=sim.shape[-1]//64)  # (B,H,64,64)
-
-
-    #     out = einsum('b i j, b j d -> b i d', sim, v)
-    #     out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
-    #     return self.to_out(out)
-    
-    def save_feature_to_file(self, filename, feature):
-        # 保存特征到文件
-        feature = feature.detach().cpu().numpy()
-        with open(filename, 'w') as f:
-            for h in range(feature.shape[1]):  # 遍历每个头
-                f.write(f"Head {h + 1}:\n")
-                np.savetxt(f, feature[0, h], fmt='%.6f')  # 仅保存第一个批次
-                f.write("\n")
 
 
 # def default(value, default_value):
