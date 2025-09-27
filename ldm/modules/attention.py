@@ -1812,7 +1812,7 @@ class BasicTransformerBlock(nn.Module):
                 # print(f"dim:{dim},heads:{n_head},d_head:{d_head}")
                 print("use_external_attention")
                 # self.attn1 = MultiHeadExternalAttention(dim,8,64)
-                # self.attn1 = MultiHeadExternalAttention(dim,n_heads,d_head)  # need to update
+                self.attn1 = MultiHeadExternalAttention(dim,n_heads,d_head)  # need to update
             elif use_RMT:
                 self.attn1 = RMTBlock(dim,n_heads,d_head)
             else:
