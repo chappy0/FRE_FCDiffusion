@@ -140,7 +140,6 @@ class DecoupledDistiller(pl.LightningModule):
                 student_block = self.student_model.get_submodule(key)
                 for n, m in student_block.named_modules():
                     if isinstance(m, DynamicHybridAttention):
-                        # Hook DHA模块内部的 ea_attn
                         hook_key = f'{key}_ea_attn'
                         m.ea_attn.register_forward_hook(get_attn_map_hook(self.acts_stu_unet, hook_key))
                         print(f"Hooked Student EA map for key: {hook_key}")
@@ -273,15 +272,7 @@ class DecoupledDistiller(pl.LightningModule):
             "loss_kd_fcnet": loss_kd_fcnet.detach(),
             "loss_attn_kl": loss_attn_kl.detach(), # <-- Add this line
         }, prog_bar=True, on_step=True, logger=True)       
-        # total_loss, loss_sd, loss_kd_unet, loss_kd_control, loss_kd_fcnet = self._calculate_losses(batch, *lambdas)
 
-        # self.log_dict({
-        #     "train_loss": total_loss,
-        #     "loss_sd": loss_sd.detach(),
-        #     "loss_kd_unet": loss_kd_unet.detach(),
-        #     "loss_kd_control": loss_kd_control.detach(),
-        #     "loss_kd_fcnet": loss_kd_fcnet.detach(),
-        # }, prog_bar=True, on_step=True, logger=True)
         return total_loss
 
     def validation_step(self, batch, batch_idx):
@@ -294,14 +285,7 @@ class DecoupledDistiller(pl.LightningModule):
         self.log("val_loss", total_val_loss, prog_bar=True, on_epoch=True, sync_dist=True)
         return total_val_loss
 
-    # def configure_optimizers(self):
-    #     params_to_optimize = list(self.student_model.control_model.parameters())
-    #     params_to_optimize += list(self.student_model.model.diffusion_model.output_blocks.parameters())
-    #     params_to_optimize += list(self.student_model.model.diffusion_model.out.parameters())
-    #     print(f"Total number of trainable parameters: {sum(p.numel() for p in params_to_optimize)}")
-    #     optimizer = torch.optim.AdamW(params_to_optimize, lr=self.hparams.learning_rate)
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.trainer.max_steps)
-    #     return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
+
 
     def configure_optimizers(self):
         params_to_optimize = []
@@ -400,10 +384,6 @@ if __name__ == "__main__":
         stage_switch_step=30000,           
         
         # Weights for the first phase: focus on imitation (balance the weighted losses initially).
-        # lambda_sd_stage1=6,
-        # lambda_kd_unet_stage1=0.8,
-        # lambda_kd_control_stage1=7,
-        # lambda_kd_fcnet_stage1=0.5,
         
         lambda_sd_stage1=5,
         lambda_kd_unet_stage1=0.04,
@@ -411,9 +391,10 @@ if __name__ == "__main__":
         lambda_kd_control_stage1=0.63,
         # Weights for the second phase: focus on self-quality (significantly increase the weight of loss_sd).
         lambda_sd_stage2=8,
-        lambda_kd_unet_stage2=0.04,         
-        lambda_kd_control_stage2=0.03,
-        lambda_kd_fcnet_stage2=0.63,
+        lambda_kd_unet_stage2=0.04,    
+        lambda_kd_fcnet_stage2=0.03,
+        lambda_kd_control_stage2=0.63,
+
     )
 
 
