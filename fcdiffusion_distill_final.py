@@ -151,7 +151,7 @@ class DecoupledDistiller(pl.LightningModule):
 
 
     def _calculate_losses(self, batch, lambda_sd, lambda_kd_unet, lambda_kd_control, lambda_kd_fcnet):
-        lambda_attn_kl = 0.05
+        lambda_attn_kl = 0.016
         with torch.no_grad():
             z0, c_dict = self.teacher_model.get_input(batch, self.teacher_model.first_stage_key)
             hint = torch.cat(c_dict['c_concat'], 1)
